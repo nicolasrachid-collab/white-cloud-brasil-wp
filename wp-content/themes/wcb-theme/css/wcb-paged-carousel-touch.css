@@ -1,0 +1,303 @@
+/**
+ * Carrosséis paginados — vitrine toque (mobile / tablet ≤1023px apenas).
+ * Desktop (≥1024px): sem regras aqui; mantém style.css.
+ *
+ * @package WCB_Theme
+ */
+
+@media (max-width: 1023px) {
+	/* Área útil: barra inferior fixa + safe-area */
+	main#main-content.wcb-main {
+		padding-bottom: max(4.75rem, calc(3.35rem + env(safe-area-inset-bottom, 0px)));
+	}
+
+	/* Cromado: sem setas; largura alinhada ao contentor (padding vem do .wcb-container) */
+	.wcb-paged-carousel {
+		--wcb-carousel-strip-gap: 0.625rem;
+		padding-left: 0 !important;
+		padding-right: 0 !important;
+	}
+
+	.wcb-paged-carousel .wcb-carousel-arrow {
+		display: none !important;
+	}
+
+	.wcb-paged-carousel .wcb-carousel-viewport {
+		border-radius: 10px;
+	}
+
+	.wcb-paged-carousel .wcb-carousel-progress {
+		margin-top: 8px;
+		gap: 4px;
+		opacity: 0.88;
+	}
+
+	.wcb-paged-carousel .wcb-carousel-progress__segment {
+		height: 3px;
+		width: 20px;
+	}
+
+	.wcb-paged-carousel .wcb-carousel-progress__segment.active {
+		width: 30px;
+	}
+
+	/* Strip horizontal (Novidades): swipe + snap */
+	.wcb-paged-carousel__grid--single-row {
+		display: flex;
+		flex-direction: row;
+		flex-wrap: nowrap;
+		align-items: stretch;
+		gap: var(--wcb-carousel-strip-gap);
+		overflow-x: auto;
+		overflow-y: hidden;
+		-webkit-overflow-scrolling: touch;
+		overscroll-behavior-x: contain;
+		touch-action: pan-x;
+		scroll-snap-type: x mandatory;
+		scroll-padding-inline: max(0.75rem, env(safe-area-inset-left, 0px));
+		padding-inline: max(0.75rem, env(safe-area-inset-left, 0px)) max(0.75rem, env(safe-area-inset-right, 0px));
+		scrollbar-width: none;
+		align-content: unset;
+	}
+
+	.wcb-paged-carousel__grid--single-row::-webkit-scrollbar {
+		display: none;
+	}
+
+	.wcb-paged-carousel__grid--single-row .wcb-product-card {
+		scroll-snap-align: start;
+		scroll-snap-stop: always;
+		/* Largura máxima explícita: evita card “quase tela cheia” + imagem gigante (5/6) */
+		max-width: min(14rem, 88vw);
+		align-self: stretch;
+		min-height: 0;
+		box-sizing: border-box;
+	}
+
+	/* Novidades: título 2 linhas + altura mínima coerente (anula min-height:0 genérico do strip) */
+	#wcb-novidades-carousel .wcb-paged-carousel__grid--single-row .wcb-product-card__title,
+	#wcb-novidades2-carousel .wcb-paged-carousel__grid--single-row .wcb-product-card__title,
+	#wcb-pdp-similar-carousel .wcb-paged-carousel__grid--single-row .wcb-product-card__title {
+		min-height: calc(0.78rem * 1.28 * 2) !important;
+	}
+
+	#wcb-novidades-carousel .wcb-paged-carousel__grid--single-row .wcb-product-card__cta-mobile,
+	#wcb-novidades2-carousel .wcb-paged-carousel__grid--single-row .wcb-product-card__cta-mobile,
+	#wcb-pdp-similar-carousel .wcb-paged-carousel__grid--single-row .wcb-product-card__cta-mobile,
+	#wcb-novidades-carousel .wcb-paged-carousel__grid--single-row .wcb-product-card__cta-soldout,
+	#wcb-novidades2-carousel .wcb-paged-carousel__grid--single-row .wcb-product-card__cta-soldout,
+	#wcb-pdp-similar-carousel .wcb-paged-carousel__grid--single-row .wcb-product-card__cta-soldout {
+		margin-top: auto !important;
+	}
+
+	/* Cards em qualquer carrossel paginado: compactos, hierarquia clara */
+	.wcb-paged-carousel .wcb-product-card {
+		border-radius: 10px;
+	}
+
+	.wcb-paged-carousel .wcb-product-card:hover {
+		transform: translateY(-2px) !important;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__img-wrap {
+		/* Alinhado ao card padrão (1:1): menos altura que 5/6 em cards estreitos */
+		aspect-ratio: 1 / 1;
+	}
+
+	/* Mesmo --wcb-card-body-gap do DS (definido em .wcb-product-card em style.css) */
+	.wcb-paged-carousel .wcb-product-card__body {
+		padding: 8px 10px 10px !important;
+		gap: var(--wcb-card-body-gap, 0.5rem) !important;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__badges {
+		top: 6px;
+		left: 6px;
+		gap: 4px;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__badge {
+		font-size: 0.58rem !important;
+		padding: 3px 6px !important;
+		line-height: 1.2 !important;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__fav {
+		top: 6px;
+		right: 6px;
+		transform: scale(0.88);
+		opacity: 0.82;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__cat {
+		font-size: 0.56rem !important;
+		color: var(--wcb-card-muted, var(--wcb-gray-500, #6b7280)) !important;
+		opacity: 1 !important;
+		margin-bottom: 0 !important;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__title {
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+		overflow: hidden;
+		font-size: 0.78rem !important;
+		line-height: 1.28 !important;
+		min-height: 0 !important;
+		margin-bottom: 0 !important;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__rating {
+		margin-bottom: 0 !important;
+		gap: 2px !important;
+		min-height: 1.125rem !important;
+		flex-shrink: 0 !important;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__stars,
+	.wcb-paged-carousel .wcb-product-card__stars-empty,
+	.wcb-paged-carousel .wcb-product-card__stars-fill {
+		font-size: 0.8rem !important;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__rating-val {
+		font-size: 0.7rem !important;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__price-current {
+		font-size: 1.18rem !important;
+		font-weight: 800 !important;
+		letter-spacing: -0.035em;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__price-old {
+		font-size: 0.6rem !important;
+		font-weight: 400 !important;
+		color: var(--wcb-card-muted, var(--wcb-gray-500, #6b7280)) !important;
+		opacity: 1 !important;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__pix-tag {
+		font-size: 0.58rem !important;
+		padding: 2px 6px !important;
+		margin-top: 0 !important;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__pix-tag strong {
+		font-size: 0.64rem !important;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__installments {
+		font-size: 12px !important;
+		font-weight: 400 !important;
+		color: var(--wcb-card-muted, var(--wcb-gray-500, #6b7280)) !important;
+		opacity: 1 !important;
+		margin-top: 0 !important;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__teor {
+		margin-top: 4px !important;
+		margin-bottom: 2px !important;
+		min-height: 1.375rem !important;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__cta-mobile {
+		min-height: 44px;
+		max-height: 46px;
+		margin-top: auto !important;
+		padding: 9px 12px !important;
+		font-size: 0.72rem !important;
+		font-weight: 700 !important;
+		border-radius: 8px !important;
+		box-sizing: border-box;
+		border: 1px solid rgba(255, 255, 255, 0.12) !important;
+		box-shadow:
+			0 1px 0 rgba(255, 255, 255, 0.18) inset,
+			0 2px 8px rgba(21, 93, 253, 0.22) !important;
+	}
+
+	/* Altura uniforme: empurra CTA para o fundo do card (anula margin-top fixo acima) */
+	.wcb-paged-carousel__grid--vendidos-row .wcb-product-card__cta-mobile,
+	.wcb-paged-carousel__grid--vendidos-row .wcb-product-card__cta-soldout,
+	.wcb-paged-carousel__slide:not(:has(> .wcb-paged-carousel__grid--single-row))
+		> .wcb-paged-carousel__grid:not(.wcb-paged-carousel__grid--vendidos-row) .wcb-product-card__cta-mobile,
+	.wcb-paged-carousel__slide:not(:has(> .wcb-paged-carousel__grid--single-row))
+		> .wcb-paged-carousel__grid:not(.wcb-paged-carousel__grid--vendidos-row) .wcb-product-card__cta-soldout {
+		margin-top: auto !important;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__cta-mobile svg {
+		width: 14px !important;
+		height: 14px !important;
+	}
+
+	.wcb-paged-carousel .wcb-product-card__cta-soldout {
+		margin-top: auto !important;
+		min-height: 44px !important;
+		box-sizing: border-box !important;
+	}
+
+	/*
+	 * Super Ofertas: CTA do carrossel já estilizado em style.css (laranja, sem glow azul).
+	 * Anula borda/sombra do strip genérico (evita !important “ganhar” por ordem).
+	 */
+	#wcb-super-ofertas .wcb-flash-ofertas-layout .wcb-paged-carousel .wcb-product-card__cta-mobile {
+		min-height: 48px !important;
+		max-height: none !important;
+		padding: 12px 14px !important;
+		border: none !important;
+		box-shadow: none !important;
+	}
+}
+
+/* Largura dos cards no strip (peek intencional) — mais estreito = mesma escala visual que “Mais vendidos” */
+@media (max-width: 430px) {
+	.wcb-paged-carousel__grid--single-row .wcb-product-card {
+		flex: 0 0 auto;
+		width: min(
+			calc((100% - var(--wcb-carousel-strip-gap, 0.625rem)) / 1.55),
+			13.25rem,
+			88vw
+		) !important;
+		max-width: min(13.25rem, 88vw);
+		min-width: 9rem;
+	}
+}
+
+@media (min-width: 431px) and (max-width: 767px) {
+	.wcb-paged-carousel__grid--single-row .wcb-product-card {
+		flex: 0 0 auto;
+		width: min(
+			calc((100% - var(--wcb-carousel-strip-gap, 0.625rem)) / 1.65),
+			14rem,
+			82vw
+		) !important;
+		max-width: min(14rem, 82vw);
+		min-width: 9.5rem;
+	}
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+	.wcb-paged-carousel__grid--single-row .wcb-product-card {
+		flex: 0 0 auto;
+		width: min(
+			calc((100% - var(--wcb-carousel-strip-gap, 0.625rem)) / 2.35),
+			13.5rem
+		) !important;
+		min-width: 10rem;
+		max-width: 13.5rem;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.wcb-paged-carousel__grid--single-row {
+		scroll-snap-type: none;
+	}
+
+	.wcb-paged-carousel .wcb-product-card:hover {
+		transform: none !important;
+	}
+}

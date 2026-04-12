@@ -17,6 +17,10 @@
 
 <body <?php body_class(); ?>>
     <?php wp_body_open(); ?>
+    <?php
+    /** Checkout: sem barra de menu / drawer (apenas is_checkout; demais páginas iguais). */
+    $wcb_skip_shop_nav = function_exists( 'is_checkout' ) && is_checkout();
+    ?>
 
     <!-- ==================== SITE HEADER WRAPPER (STICKY) ==================== -->
     <div class="wcb-site-header" id="wcb-site-header">
@@ -56,8 +60,9 @@
     <header class="wcb-header" id="wcb-header">
         <div class="wcb-container wcb-header__inner">
 
+            <?php if ( ! $wcb_skip_shop_nav ) : ?>
             <!-- Mobile Toggle -->
-            <button class="wcb-mobile-toggle" id="wcb-mobile-toggle" aria-label="Abrir menu">
+            <button type="button" class="wcb-mobile-toggle" id="wcb-mobile-toggle" aria-label="<?php echo esc_attr__( 'Abrir menu', 'wcb-theme' ); ?>" aria-expanded="false" aria-controls="wcb-mobile-menu" aria-haspopup="dialog">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <line x1="3" y1="12" x2="21" y2="12"></line>
@@ -65,15 +70,18 @@
                     <line x1="3" y1="18" x2="21" y2="18"></line>
                 </svg>
             </button>
+            <?php endif; ?>
 
-            <!-- Logo -->
-            <div class="wcb-header__logo">
-                <?php wcb_get_logo(); ?>
-            </div>
+            <div class="wcb-header__brand-search">
+                <!-- Logo -->
+                <div class="wcb-header__logo">
+                    <?php wcb_get_logo(); ?>
+                </div>
 
-            <!-- Search Bar -->
-            <div class="wcb-header__search" id="wcb-search">
-                <?php get_search_form(); ?>
+                <!-- Search Bar -->
+                <div class="wcb-header__search" id="wcb-search">
+                    <?php get_search_form(); ?>
+                </div>
             </div>
 
             <!-- Header Actions -->
@@ -89,7 +97,7 @@
                                 <polyline points="10 17 15 12 10 7" />
                                 <line x1="15" y1="12" x2="3" y2="12" />
                             </svg>
-                            Entre ou Cadastre-se
+                            <span class="wcb-header__login-label">Entre ou Cadastre-se</span>
                         </a>
                     <?php endif; ?>
 
@@ -106,19 +114,39 @@
                     </span>
 
                     <!-- Account -->
-                    <a href="<?php echo esc_url(wc_get_account_endpoint_url('dashboard')); ?>" class="wcb-header__action"
-                        title="Minha Conta">
+                    <a href="<?php echo esc_url(wc_get_account_endpoint_url('dashboard')); ?>"
+                        class="wcb-header__action wcb-header__action--account"
+                        id="wcb-header-account-link"
+                        title="<?php esc_attr_e('Minha Conta', 'wcb-theme'); ?>"
+                        aria-label="<?php esc_attr_e('Minha conta', 'wcb-theme'); ?>">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                             <circle cx="12" cy="7" r="4"></circle>
                         </svg>
-                        <span>Conta</span>
+                        <span class="wcb-header__account-mobile-hint">
+                            <?php
+                            if (is_user_logged_in()) {
+                                $wcb_u = wp_get_current_user();
+                                $wcb_hi = $wcb_u->first_name ? $wcb_u->first_name : $wcb_u->display_name;
+                                printf(
+                                    /* translators: %s: first name or display name */
+                                    esc_html__('Olá, %s', 'wcb-theme'),
+                                    esc_html($wcb_hi)
+                                );
+                            } else {
+                                esc_html_e('Olá, faça seu login ou cadastre-se', 'wcb-theme');
+                            }
+                            ?>
+                        </span>
+                        <span class="wcb-header__action-desktop-label"><?php esc_html_e('Conta', 'wcb-theme'); ?></span>
                     </a>
 
                     <!-- Favorites -->
                     <a href="<?php echo esc_url(home_url('/minha-conta/favoritos/')); ?>" class="wcb-header__action"
-                        title="Favoritos" id="wcb-header-fav-link">
+                        title="<?php esc_attr_e('Favoritos', 'wcb-theme'); ?>"
+                        aria-label="<?php esc_attr_e('Favoritos', 'wcb-theme'); ?>"
+                        id="wcb-header-fav-link">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                             <path
@@ -136,9 +164,8 @@
                         <span>Favoritos</span>
                     </a>
 
-                    <!-- Carrinho: lateral Xoo (se ativo) ou link para página do carrinho -->
-                    <?php if ( function_exists( 'wcb_is_side_cart_active' ) && wcb_is_side_cart_active() ) : ?>
-                    <button type="button" class="wcb-header__action xoo-wsc-cart-trigger" id="wcb-mini-cart-trigger" title="Carrinho" aria-label="Abrir carrinho">
+                    <!-- Carrinho: sempre página do carrinho (não abre drawer lateral no header) -->
+                    <a href="<?php echo esc_url( wc_get_cart_url() ); ?>" class="wcb-header__action" id="wcb-mini-cart-trigger" title="<?php echo esc_attr__( 'Carrinho', 'wcb-theme' ); ?>" aria-label="<?php echo esc_attr__( 'Ver carrinho', 'wcb-theme' ); ?>">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
@@ -148,22 +175,8 @@
                         <span class="wcb-header__cart-count">
                             <?php echo wcb_cart_count(); ?>
                         </span>
-                        <span>Carrinho</span>
-                    </button>
-                    <?php else : ?>
-                    <a href="<?php echo esc_url( wc_get_cart_url() ); ?>" class="wcb-header__action" id="wcb-mini-cart-trigger" title="Carrinho" aria-label="Ver carrinho">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
-                            <line x1="3" y1="6" x2="21" y2="6"></line>
-                            <path d="M16 10a4 4 0 0 1-8 0"></path>
-                        </svg>
-                        <span class="wcb-header__cart-count">
-                            <?php echo wcb_cart_count(); ?>
-                        </span>
-                        <span>Carrinho</span>
+                        <span><?php esc_html_e( 'Carrinho', 'wcb-theme' ); ?></span>
                     </a>
-                    <?php endif; ?>
                 <?php else: ?>
                     <!-- Account (no WC) -->
                     <a href="<?php echo esc_url(wp_login_url()); ?>" class="wcb-header__action" title="Login">
@@ -176,9 +189,12 @@
                     </a>
                 <?php endif; ?>
 
-                <!-- Mobile Search Toggle -->
-                <button class="wcb-header__action wcb-mobile-toggle" id="wcb-search-toggle" aria-label="Buscar"
-                    style="display:none;">
+                <!-- Toggle legado da lupa (oculto; busca integrada no grid mobile — phase3). Sem classe .wcb-mobile-toggle para não colidir com o menu. -->
+                <button type="button" class="wcb-header__action wcb-header__search-toggle" id="wcb-search-toggle"
+                    aria-expanded="false"
+                    aria-controls="wcb-search"
+                    aria-label="<?php esc_attr_e('Buscar produtos', 'wcb-theme'); ?>"
+                    hidden>
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                         stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                         <circle cx="11" cy="11" r="8"></circle>
@@ -189,8 +205,9 @@
         </div>
     </header>
 
+    <?php if ( ! $wcb_skip_shop_nav ) : ?>
     <!-- ==================== NAVIGATION BAR ==================== -->
-    <nav class="wcb-nav" id="wcb-nav" role="navigation" aria-label="Menu principal">
+    <nav class="wcb-nav" id="wcb-nav" role="navigation" aria-label="<?php echo esc_attr__( 'Menu principal', 'wcb-theme' ); ?>">
         <div class="wcb-container wcb-nav__inner">
             <?php
             if (has_nav_menu('primary')) {
@@ -222,7 +239,136 @@
             }
             ?>
         </div>
+
+        <!-- Promo hover: dentro de #wcb-nav para position:absolute top:100% ancorar na barra -->
+        <?php if ( class_exists('WooCommerce') ) :
+            $wcb_promo_dd_transient = defined( 'WCB_PROMO_DD_TRANSIENT' ) ? WCB_PROMO_DD_TRANSIENT : 'wcb_promo_dropdown_cards_promocoes_v3';
+            $promo_cards_html       = get_transient( $wcb_promo_dd_transient );
+            if ( false === $promo_cards_html ) {
+                $promo_cards_html = '';
+                /** @var string Slug da categoria WooCommerce (filtro: wcb_promo_dropdown_category_slug). */
+                $wcb_promo_dd_cat_slug = apply_filters( 'wcb_promo_dropdown_category_slug', 'promocoes' );
+                $wcb_promo_dd_term     = get_term_by( 'slug', $wcb_promo_dd_cat_slug, 'product_cat' );
+                if ( $wcb_promo_dd_term && ! is_wp_error( $wcb_promo_dd_term ) ) {
+                    $promo_q = new WP_Query(
+                        function_exists( 'wcb_promo_dropdown_wp_query_args' )
+                            ? wcb_promo_dropdown_wp_query_args( (int) $wcb_promo_dd_term->term_id, (string) $wcb_promo_dd_term->slug )
+                            : array(
+                                'post_type'              => 'product',
+                                'post_status'            => 'publish',
+                                'posts_per_page'         => 12,
+                                'orderby'                => 'rand',
+                                'no_found_rows'          => true,
+                                'update_post_meta_cache' => false,
+                                'update_post_term_cache' => true,
+                                'meta_query'             => array(
+                                    array(
+                                        'key'   => '_stock_status',
+                                        'value' => 'instock',
+                                    ),
+                                ),
+                                'tax_query'              => function_exists( 'wcb_promo_dropdown_tax_query' )
+                                    ? wcb_promo_dropdown_tax_query( (int) $wcb_promo_dd_term->term_id )
+                                    : array(
+                                        array(
+                                            'taxonomy'         => 'product_cat',
+                                            'field'            => 'term_id',
+                                            'terms'            => (int) $wcb_promo_dd_term->term_id,
+                                            'include_children' => true,
+                                        ),
+                                    ),
+                            )
+                    );
+                    if ( $promo_q->have_posts() ) :
+                        while ( $promo_q->have_posts() ) : $promo_q->the_post();
+                            global $product;
+                            if (!$product) continue;
+                            $reg  = (float) $product->get_regular_price();
+                            $cur  = (float) $product->get_price();
+                            $pix  = $cur > 0 ? $cur * 0.95 : 0;
+                            $save = ($reg > 0 && $cur > 0 && $reg > $cur) ? round((($reg - $cur) / $reg) * 100) : 0;
+                            $img  = has_post_thumbnail() ? get_the_post_thumbnail_url(get_the_ID(), 'wcb-product-thumb') : '';
+
+                            $promo_cards_html .= '<div class="wcb-promo-dd__card">';
+                            if ($save > 0) {
+                                $promo_cards_html .= '<span class="wcb-promo-dd__discount">-' . $save . '%</span>';
+                            }
+                            $promo_cards_html .= '<a href="' . esc_url(get_permalink()) . '" class="wcb-promo-dd__img-wrap">';
+                            if ($img) {
+                                $promo_cards_html .= '<img src="' . esc_url($img) . '" alt="' . esc_attr(get_the_title()) . '" loading="lazy" width="176" height="158">';
+                            } else {
+                                $promo_cards_html .= '<div class="wcb-promo-dd__no-img"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.2"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg></div>';
+                            }
+                            $promo_cards_html .= '</a>';
+                            $promo_cards_html .= '<a href="' . esc_url(get_permalink()) . '" class="wcb-promo-dd__name">' . esc_html(get_the_title()) . '</a>';
+                            $promo_cards_html .= '<div class="wcb-promo-dd__prices">';
+                            if ($reg > 0 && $reg > $cur) {
+                                $promo_cards_html .= '<span class="wcb-promo-dd__price-old">R$ ' . number_format($reg, 2, ',', '.') . '</span>';
+                            }
+                            if ($cur > 0) {
+                                $promo_cards_html .= '<span class="wcb-promo-dd__price-cur">R$ ' . number_format($cur, 2, ',', '.') . '</span>';
+                            }
+                            $promo_cards_html .= '</div>';
+                            if ($pix > 0) {
+                                $promo_cards_html .= '<span class="wcb-promo-dd__pix">R$ ' . number_format($pix, 2, ',', '.') . ' no PIX</span>';
+                            }
+                            $promo_cards_html .= '</div>';
+                        endwhile;
+                        wp_reset_postdata();
+                    endif;
+                }
+                set_transient( $wcb_promo_dd_transient, $promo_cards_html, 6 * HOUR_IN_SECONDS );
+            }
+        ?>
+        <?php if ( ! empty($promo_cards_html) ) :
+            /** Mesmo destino que o item "Promoções" do menu (arquivo da categoria WooCommerce). */
+            $wcb_promo_see_all_slug = apply_filters('wcb_promo_dropdown_category_slug', 'promocoes');
+            $wcb_promo_see_all_term = get_term_by('slug', $wcb_promo_see_all_slug, 'product_cat');
+            $wcb_promo_see_all_url  = home_url('/categoria-produto/promocoes/');
+            if ($wcb_promo_see_all_term && ! is_wp_error($wcb_promo_see_all_term)) {
+                $wcb_promo_see_all_link = get_term_link($wcb_promo_see_all_term);
+                if (! is_wp_error($wcb_promo_see_all_link)) {
+                    $wcb_promo_see_all_url = $wcb_promo_see_all_link;
+                }
+            }
+        ?>
+        <div class="wcb-promo-dd" id="wcb-promo-dd" aria-hidden="true">
+            <div class="wcb-container">
+                <div class="wcb-promo-dd__inner">
+                    <div class="wcb-promo-dd__header">
+                        <div class="wcb-promo-dd__header-left">
+                            <h3 class="wcb-promo-dd__title">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5 0.67s.74 2.65.74 4.8c0 2.06-1.35 3.73-3.41 3.73-2.07 0-3.63-1.67-3.63-3.73l.03-.36C5.21 7.51 4 10.62 4 14c0 4.42 3.58 8 8 8s8-3.58 8-8C20 8.61 17.41 3.8 13.5.67zM11.71 19c-1.78 0-3.22-1.4-3.22-3.14 0-1.62 1.05-2.76 2.81-3.12 1.77-.36 3.6-1.21 4.62-2.58.39 1.29.59 2.65.59 4.04 0 2.65-2.15 4.8-4.8 4.8z"/></svg>
+                                Promoções Imperdíveis
+                            </h3>
+                            <span class="wcb-promo-dd__subtitle">Produtos com até 30% OFF + 5% extra no PIX</span>
+                        </div>
+                        <a href="<?php echo esc_url($wcb_promo_see_all_url); ?>" class="wcb-promo-dd__see-all">
+                            Ver todas ofertas
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                        </a>
+                    </div>
+                    <div class="wcb-promo-dd__carousel">
+                        <button class="wcb-promo-dd__arrow wcb-promo-dd__arrow--prev" aria-label="Anterior">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+                        </button>
+                        <div class="wcb-promo-dd__track-wrap">
+                            <div class="wcb-promo-dd__track" id="wcb-promo-dd-track">
+                                <?php echo $promo_cards_html; ?>
+                            </div>
+                        </div>
+                        <button class="wcb-promo-dd__arrow wcb-promo-dd__arrow--next" aria-label="Próximo">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+        <?php endif; ?>
+
     </nav>
+    <?php endif; ?>
 
     </div><!-- /.wcb-site-header -->
 
@@ -231,7 +377,29 @@
         var header = document.getElementById('wcb-site-header');
         if (!header) return;
         var lastScroll = 0;
+        function narrow() {
+            return window.matchMedia && window.matchMedia('(max-width: 1023px)').matches;
+        }
+        function clearScrolledIfNarrow() {
+            if (narrow()) {
+                header.classList.remove('is-scrolled');
+            }
+        }
+        clearScrolledIfNarrow();
+        if (window.matchMedia) {
+            var mq = window.matchMedia('(max-width: 1023px)');
+            if (mq.addEventListener) {
+                mq.addEventListener('change', clearScrolledIfNarrow);
+            } else if (mq.addListener) {
+                mq.addListener(clearScrolledIfNarrow);
+            }
+        }
         window.addEventListener('scroll', function() {
+            /* ≤1023px: alinhar a wcb-nav-mobile-bp.css — sem is-scrolled (evita compositing Chrome). */
+            if (narrow()) {
+                header.classList.remove('is-scrolled');
+                return;
+            }
             var y = window.scrollY || window.pageYOffset;
             if (y > 60) {
                 header.classList.add('is-scrolled');
@@ -242,105 +410,6 @@
         }, { passive: true });
     })();
     </script>
-
-    <!-- ==================== PROMO HOVER DROPDOWN ==================== -->
-    <?php if ( class_exists('WooCommerce') ) :
-        // Busca produtos em promoção (cache de 6h) — reutiliza transient de IDs
-        $promo_cards_html = get_transient('wcb_promo_dropdown_cards');
-        if ( false === $promo_cards_html ) {
-            $on_sale = get_transient('wcb_on_sale_ids');
-            if (false === $on_sale) {
-                $on_sale = wc_get_product_ids_on_sale();
-                set_transient('wcb_on_sale_ids', $on_sale, HOUR_IN_SECONDS);
-            }
-            if ( ! empty($on_sale) ) {
-                $promo_q = new WP_Query(array(
-                    'post_type'      => 'product',
-                    'posts_per_page' => 12,
-                    'post__in'       => $on_sale,
-                    'orderby'        => 'rand',
-                    'meta_query'     => array(
-                        array('key' => '_stock_status', 'value' => 'instock'),
-                    ),
-                ));
-                if ( $promo_q->have_posts() ) :
-                    while ( $promo_q->have_posts() ) : $promo_q->the_post();
-                        global $product;
-                        if (!$product) continue;
-                        $reg  = (float) $product->get_regular_price();
-                        $cur  = (float) $product->get_price();
-                        $pix  = $cur > 0 ? $cur * 0.95 : 0;
-                        $save = ($reg > 0 && $cur > 0 && $reg > $cur) ? round((($reg - $cur) / $reg) * 100) : 0;
-                        $img  = has_post_thumbnail() ? get_the_post_thumbnail_url(get_the_ID(), 'wcb-product-thumb') : '';
-
-                        $promo_cards_html .= '<div class="wcb-promo-dd__card">';
-                        if ($save > 0) {
-                            $promo_cards_html .= '<span class="wcb-promo-dd__discount">-' . $save . '%</span>';
-                        }
-                        $promo_cards_html .= '<a href="' . esc_url(get_permalink()) . '" class="wcb-promo-dd__img-wrap">';
-                        if ($img) {
-                            $promo_cards_html .= '<img src="' . esc_url($img) . '" alt="' . esc_attr(get_the_title()) . '" loading="lazy" width="160" height="160">';
-                        } else {
-                            $promo_cards_html .= '<div class="wcb-promo-dd__no-img"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.2"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg></div>';
-                        }
-                        $promo_cards_html .= '</a>';
-                        $promo_cards_html .= '<a href="' . esc_url(get_permalink()) . '" class="wcb-promo-dd__name">' . esc_html(get_the_title()) . '</a>';
-                        $promo_cards_html .= '<div class="wcb-promo-dd__prices">';
-                        if ($reg > 0 && $reg > $cur) {
-                            $promo_cards_html .= '<span class="wcb-promo-dd__price-old">R$ ' . number_format($reg, 2, ',', '.') . '</span>';
-                        }
-                        if ($cur > 0) {
-                            $promo_cards_html .= '<span class="wcb-promo-dd__price-cur">R$ ' . number_format($cur, 2, ',', '.') . '</span>';
-                        }
-                        $promo_cards_html .= '</div>';
-                        if ($pix > 0) {
-                            $promo_cards_html .= '<span class="wcb-promo-dd__pix">R$ ' . number_format($pix, 2, ',', '.') . ' no PIX</span>';
-                        }
-                        $promo_cards_html .= '</div>';
-                    endwhile;
-                    wp_reset_postdata();
-                endif;
-            }
-            set_transient('wcb_promo_dropdown_cards', $promo_cards_html, 6 * HOUR_IN_SECONDS);
-        }
-    ?>
-    <?php if ( ! empty($promo_cards_html) ) : ?>
-    <div class="wcb-promo-dd" id="wcb-promo-dd" aria-hidden="true">
-        <div class="wcb-container">
-            <div class="wcb-promo-dd__inner">
-                <!-- Cabeçalho -->
-                <div class="wcb-promo-dd__header">
-                    <div class="wcb-promo-dd__header-left">
-                        <h3 class="wcb-promo-dd__title">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5 0.67s.74 2.65.74 4.8c0 2.06-1.35 3.73-3.41 3.73-2.07 0-3.63-1.67-3.63-3.73l.03-.36C5.21 7.51 4 10.62 4 14c0 4.42 3.58 8 8 8s8-3.58 8-8C20 8.61 17.41 3.8 13.5.67zM11.71 19c-1.78 0-3.22-1.4-3.22-3.14 0-1.62 1.05-2.76 2.81-3.12 1.77-.36 3.6-1.21 4.62-2.58.39 1.29.59 2.65.59 4.04 0 2.65-2.15 4.8-4.8 4.8z"/></svg>
-                            Promoções Imperdíveis
-                        </h3>
-                        <span class="wcb-promo-dd__subtitle">Produtos com até 30% OFF + 5% extra no PIX</span>
-                    </div>
-                    <a href="<?php echo esc_url(home_url('/produto/promocao/')); ?>" class="wcb-promo-dd__see-all">
-                        Ver todas ofertas
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                    </a>
-                </div>
-                <!-- Carousel -->
-                <div class="wcb-promo-dd__carousel">
-                    <button class="wcb-promo-dd__arrow wcb-promo-dd__arrow--prev" aria-label="Anterior">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
-                    </button>
-                    <div class="wcb-promo-dd__track-wrap">
-                        <div class="wcb-promo-dd__track" id="wcb-promo-dd-track">
-                            <?php echo $promo_cards_html; ?>
-                        </div>
-                    </div>
-                    <button class="wcb-promo-dd__arrow wcb-promo-dd__arrow--next" aria-label="Próximo">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-    <?php endif; ?>
-    <?php endif; ?>
 
     <!-- ==================== MEGA MENU SCRIPT ==================== -->
     <script>
@@ -621,13 +690,14 @@
     })();
     </script>
 
+    <?php if ( ! $wcb_skip_shop_nav ) : ?>
     <!-- ==================== MOBILE MENU ==================== -->
 
-    <div class="wcb-mobile-overlay" id="wcb-mobile-overlay"></div>
-    <div class="wcb-mobile-menu" id="wcb-mobile-menu">
+    <div class="wcb-mobile-overlay" id="wcb-mobile-overlay" aria-hidden="true"></div>
+    <div class="wcb-mobile-menu" id="wcb-mobile-menu" role="dialog" aria-modal="true" aria-labelledby="wcb-mobile-menu-heading" aria-hidden="true">
         <div class="wcb-mobile-menu__header">
-            <span class="wcb-header__logo-text">White <span>Cloud</span></span>
-            <button class="wcb-mobile-menu__close" id="wcb-mobile-close" aria-label="Fechar menu">
+            <?php wcb_mm_drawer_header_cap_markup(); ?>
+            <button type="button" class="wcb-mobile-menu__close" id="wcb-mobile-close" aria-label="<?php echo esc_attr__( 'Fechar menu', 'wcb-theme' ); ?>">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
                     stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -635,27 +705,17 @@
                 </svg>
             </button>
         </div>
-        <nav class="wcb-mobile-menu__nav">
+        <nav class="wcb-mobile-menu__nav" aria-label="<?php echo esc_attr__( 'Menu principal', 'wcb-theme' ); ?>">
             <?php
-            if (has_nav_menu('primary')) {
-                wp_nav_menu(array(
-                    'theme_location' => 'primary',
-                    'container' => false,
-                    'items_wrap' => '%3$s',
-                    'depth' => 1,
-                    'fallback_cb' => false,
-                ));
+            if ( has_nav_menu( 'primary' ) ) {
+                echo wcb_mobile_drilldown_menu_html( 'primary' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
             } else {
-                echo '<a href="' . esc_url(home_url('/')) . '">Início</a>';
-                echo '<a href="' . esc_url(home_url('/loja/')) . '">Loja</a>';
-                if (class_exists('WooCommerce')) {
-                    echo '<a href="' . esc_url(wc_get_cart_url()) . '">Carrinho</a>';
-                    echo '<a href="' . esc_url(wc_get_account_endpoint_url('dashboard')) . '">Minha Conta</a>';
-                }
+                echo wcb_mobile_drilldown_fallback_html(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
             }
             ?>
         </nav>
     </div>
+    <?php endif; ?>
 
     <!-- ==================== MINI-CART FLYOUT ==================== -->
     <div class="wcb-mini-cart-overlay" id="wcb-mini-cart-overlay" aria-hidden="true"></div>

@@ -45,6 +45,226 @@ function wcb_get_free_ship_threshold()
 }
 
 /**
+ * Obtém o termo product_cat a partir de uma URL de loja/listagem (query ?categoria= ou permalink).
+ *
+ * @param string $url URL absoluta ou relativa.
+ * @return WP_Term|null
+ */
+function wcb_get_product_cat_from_url($url)
+{
+    if (!is_string($url) || $url === '' || !taxonomy_exists('product_cat')) {
+        return null;
+    }
+    if (strpos($url, 'http') !== 0) {
+        $url = home_url($url);
+    }
+    $parsed = wp_parse_url($url);
+    if (empty($parsed['path']) && empty($parsed['query'])) {
+        return null;
+    }
+    if (!empty($parsed['query'])) {
+        parse_str($parsed['query'], $qs);
+        if (!empty($qs['categoria'])) {
+            $t = get_term_by('slug', sanitize_title($qs['categoria']), 'product_cat');
+            if ($t && !is_wp_error($t)) {
+                return $t;
+            }
+        }
+    }
+    if (!empty($parsed['path'])) {
+        $path = trim($parsed['path'], '/');
+        $parts = $path === '' ? array() : explode('/', $path);
+        foreach (array('categoria-produto', 'product-category') as $marker) {
+            $pos = array_search($marker, $parts, true);
+            if ($pos !== false && isset($parts[$pos + 1])) {
+                $t = get_term_by('slug', $parts[$pos + 1], 'product_cat');
+                if ($t && !is_wp_error($t)) {
+                    return $t;
+                }
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * Contagem de produtos como na listagem do catálogo: publicados, visíveis na loja,
+ * respeita "esconder esgotados" e inclui subcategorias (include_children).
+ *
+ * @param int|WP_Term $term Term ID ou objeto product_cat.
+ * @return int
+ */
+function wcb_get_product_cat_catalog_count($term)
+{
+    if (!function_exists('WC') || !taxonomy_exists('product_cat') || !taxonomy_exists('product_visibility')) {
+        return 0;
+    }
+    $t = $term instanceof WP_Term ? $term : get_term((int) $term, 'product_cat');
+    if (!$t || is_wp_error($t)) {
+        return 0;
+    }
+    $neg_visibility = array('exclude-from-catalog', 'exclude-from-search');
+    if ('yes' === get_option('woocommerce_hide_out_of_stock_items')) {
+        $neg_visibility[] = 'outofstock';
+    }
+    $q = new WP_Query(array(
+        'post_type' => 'product',
+        'post_status' => 'publish',
+        'posts_per_page' => 1,
+        'fields' => 'ids',
+        'no_found_rows' => false,
+        'update_post_meta_cache' => false,
+        'update_post_term_cache' => false,
+        'tax_query' => array(
+            'relation' => 'AND',
+            array(
+                'taxonomy' => 'product_cat',
+                'field' => 'term_id',
+                'terms' => (int) $t->term_id,
+                'include_children' => true,
+            ),
+            array(
+                'taxonomy' => 'product_visibility',
+                'field' => 'name',
+                'terms' => $neg_visibility,
+                'operator' => 'NOT IN',
+            ),
+        ),
+    ));
+    $n = (int) $q->found_posts;
+    wp_reset_postdata();
+    return $n;
+}
+
+/**
+ * Página da loja: ?categoria=slug filtra por product_cat (igual ao link dos cards da home).
+ * Sem isto, o parâmetro era ignorado e a contagem dos cards não batia com a listagem.
+ */
+add_action('woocommerce_product_query', 'wcb_shop_product_query_filter_categoria_param', 25);
+function wcb_shop_product_query_filter_categoria_param($q)
+{
+    if (is_admin() || empty($_GET['categoria']) || !taxonomy_exists('product_cat')) {
+        return;
+    }
+    $slug = sanitize_title(wp_unslash($_GET['categoria']));
+    if ($slug === '') {
+        return;
+    }
+    $term = get_term_by('slug', $slug, 'product_cat');
+    if (!$term || is_wp_error($term)) {
+        return;
+    }
+    $tax_query = $q->get('tax_query');
+    if (!is_array($tax_query)) {
+        $tax_query = array();
+    }
+    $tax_query[] = array(
+        'taxonomy' => 'product_cat',
+        'field' => 'term_id',
+        'terms' => (int) $term->term_id,
+        'include_children' => true,
+    );
+    $q->set('tax_query', $tax_query);
+}
+
+/**
+ * Escopo do countdown da barra de oferta na PDP (sessionStorage no navegador).
+ *
+ * - Categoria “Super Ofertas” (flash): slugs filtráveis via `wcb_pdp_offer_flash_category_slugs`
+ *   (por defeito `super-ofertas` e `ofertas-relampago`, equivalentes). Timer global partilhado na sessão.
+ * - ACF (opcional): campo `wcb_pdp_offer_timer_scope` no produto — `auto` | `global` | `product`.
+ *   Em `auto`, aplica global só se o produto estiver numa categoria flash.
+ *
+ * @param int                  $product_id   ID do produto.
+ * @param array|WP_Error|false $product_cats Resultado de get_the_terms( ..., 'product_cat' ).
+ * @return string 'global'|'product'
+ */
+function wcb_pdp_get_offer_bar_timer_scope($product_id, $product_cats)
+{
+    $product_id = (int) $product_id;
+    $flash_slugs = apply_filters(
+        'wcb_pdp_offer_flash_category_slugs',
+        array('super-ofertas', 'ofertas-relampago')
+    );
+    $flash_slugs = array_filter(array_map(function ($s) {
+        return strtolower(sanitize_title((string) $s));
+    }, (array) $flash_slugs));
+
+    $in_flash = false;
+    if (is_array($product_cats) && !is_wp_error($product_cats) && $flash_slugs !== array()) {
+        $term_slugs = array_map('strtolower', wp_list_pluck($product_cats, 'slug'));
+        foreach ($flash_slugs as $fs) {
+            if ($fs !== '' && in_array($fs, $term_slugs, true)) {
+                $in_flash = true;
+                break;
+            }
+        }
+    }
+
+    $acf_scope = 'auto';
+    if (function_exists('get_field')) {
+        $v = get_field('wcb_pdp_offer_timer_scope', $product_id);
+        if (is_string($v)) {
+            $v = strtolower(trim($v));
+            if (in_array($v, array('auto', 'global', 'product'), true)) {
+                $acf_scope = $v;
+            }
+        }
+    } elseif ($product_id > 0) {
+        $raw = get_post_meta($product_id, 'wcb_pdp_offer_timer_scope', true);
+        if (is_string($raw) && $raw !== '') {
+            $v = strtolower(trim($raw));
+            if (in_array($v, array('global', 'product'), true)) {
+                $acf_scope = $v;
+            }
+        }
+    }
+
+    if ($acf_scope === 'auto') {
+        return $in_flash ? 'global' : 'product';
+    }
+
+    return $acf_scope === 'global' ? 'global' : 'product';
+}
+
+/**
+ * Garante uma categoria “flash” se ainda não existir nenhuma das equivalentes.
+ * Slugs equivalentes: super-ofertas, ofertas-relampago (ver `wcb_pdp_offer_flash_category_slugs`).
+ * Só cria `super-ofertas` quando nenhum dos dois termos existe (evita duplicar).
+ */
+function wcb_ensure_flash_offer_product_category()
+{
+    if (!function_exists('taxonomy_exists') || !taxonomy_exists('product_cat')) {
+        return;
+    }
+
+    $canonical = 'super-ofertas';
+    $legacy = 'ofertas-relampago';
+
+    if (term_exists($canonical, 'product_cat') || term_exists($legacy, 'product_cat')) {
+        return;
+    }
+
+    $insert = wp_insert_term(
+        __('Super Ofertas', 'wcb-theme'),
+        'product_cat',
+        array(
+            'slug' => $canonical,
+            'description' => __(
+                'Ofertas em destaque (equivalente à secção Super Ofertas). Countdown global da barra de oferta na PDP. Slug legado aceite: ofertas-relampago.',
+                'wcb-theme'
+            ),
+        )
+    );
+
+    if (is_wp_error($insert)) {
+        return;
+    }
+}
+
+add_action('init', 'wcb_ensure_flash_offer_product_category', 20);
+
+/**
  * Carrinho lateral Xoo Side Cart: só quando o plugin está ativo.
  * Para desativar pelo tema (plugin ainda ativo): add_filter( 'wcb_side_cart_active', '__return_false' );
  */
@@ -69,6 +289,30 @@ function wcb_is_side_cart_active()
 function wcb_pdp_cta_arrow_svg()
 {
     return '<svg class="wcb-pdp-cta-arrow" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>';
+}
+
+/**
+ * Remove o YITH FBT do hook `woocommerce_after_single_product_summary`
+ * (o template `single-product.php` renderiza o bloco na coluna da buybox).
+ */
+function wcb_pdp_detach_yith_fbt_from_after_summary()
+{
+    if (!class_exists('YITH_WFBT_Frontend')) {
+        return;
+    }
+    remove_action('woocommerce_after_single_product_summary', array(YITH_WFBT_Frontend(), 'add_bought_together_form'), 1);
+}
+
+/**
+ * HTML do Frequently Bought Together (YITH) para o produto atual, ou string vazia.
+ */
+function wcb_pdp_get_yith_fbt_html()
+{
+    if (!class_exists('YITH_WFBT_Frontend')) {
+        return '';
+    }
+    $html = YITH_WFBT_Frontend()->add_bought_together_form(false, true);
+    return is_string($html) ? $html : '';
 }
 
 add_filter(
@@ -227,27 +471,20 @@ add_action('wp_head', function () {
         .wcb-qv-modal {
             background: #fff !important;
             border-radius: 20px !important;
-            max-width: 920px !important;
-            width: 100% !important;
-            max-height: 88vh !important;
-            overflow-y: auto !important;
-            overflow-x: hidden !important;
+            width: min(80vw, 1080px) !important;
+            max-width: min(80vw, 1080px) !important;
+            height: min(80vh, calc(100dvh - 3rem)) !important;
+            max-height: min(80vh, calc(100dvh - 3rem)) !important;
+            display: flex !important;
+            flex-direction: column !important;
+            min-height: 0 !important;
+            overflow: hidden !important;
+            scroll-behavior: smooth !important;
             position: relative !important;
-            box-shadow: 0 25px 60px -12px rgba(10, 15, 30, 0.30), 0 0 0 1px rgba(0, 0, 0, 0.04) !important;
+            box-shadow:
+                0 25px 60px -12px rgba(10, 15, 30, 0.28),
+                0 0 0 1px rgba(15, 23, 42, 0.06) !important;
             animation: wcbQvIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
-        }
-
-        .wcb-qv-modal::-webkit-scrollbar {
-            width: 5px;
-        }
-
-        .wcb-qv-modal::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        .wcb-qv-modal::-webkit-scrollbar-thumb {
-            background: #cbd5e1;
-            border-radius: 10px;
         }
 
         @keyframes wcbQvIn {
@@ -289,12 +526,19 @@ add_action('wp_head', function () {
             transform: rotate(90deg) !important;
         }
 
+        #wcb-qv-close:focus-visible {
+            outline: 2px solid rgba(21, 93, 253, 0.55) !important;
+            outline-offset: 2px !important;
+        }
+
         /* ── Loading State ── */
         .wcb-qv-loading {
             display: flex;
             flex-direction: column !important;
             align-items: center !important;
             justify-content: center !important;
+            flex: 1 1 auto !important;
+            min-height: 0 !important;
             padding: 5rem 2rem !important;
             gap: 1rem !important;
             color: #94a3b8 !important;
@@ -303,6 +547,11 @@ add_action('wp_head', function () {
 
         .wcb-qv-loading.is-hidden {
             display: none !important;
+            flex: 0 0 0 !important;
+            min-height: 0 !important;
+            height: 0 !important;
+            padding: 0 !important;
+            overflow: hidden !important;
         }
 
         .wcb-qv-spinner {
@@ -320,36 +569,110 @@ add_action('wp_head', function () {
             }
         }
 
-        /* ── Content Grid ── */
+        /* ── Content: galeria + buybox (preenche altura do modal) ── */
         #wcb-qv-content {
-            display: none;
-            grid-template-columns: 1fr 1fr !important;
+            display: none !important;
+            flex-direction: column !important;
             gap: 0 !important;
             padding: 0 !important;
+            min-height: 0 !important;
+            flex: 0 0 0 !important;
+            overflow: hidden !important;
         }
 
         #wcb-qv-content.is-visible {
+            display: flex !important;
+            flex-direction: column !important;
+            flex: 1 1 auto !important;
+            position: relative !important;
+            padding: 0 !important;
+            min-height: 0 !important;
+            overflow: hidden !important;
+        }
+
+        /* Skip link: fora do grid; só visível com :focus-visible (teclado) */
+        .wcb-qv-skip-buy {
+            position: absolute !important;
+            left: 1rem !important;
+            top: 0.55rem !important;
+            z-index: 11 !important;
+            width: 1px !important;
+            height: 1px !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            overflow: hidden !important;
+            clip-path: inset(50%) !important;
+            clip: rect(0, 0, 0, 0) !important;
+            white-space: nowrap !important;
+            border: 0 !important;
+        }
+
+        .wcb-qv-skip-buy:focus-visible {
+            width: auto !important;
+            height: auto !important;
+            padding: 0.4rem 0.75rem !important;
+            clip-path: none !important;
+            clip: auto !important;
+            overflow: visible !important;
+            white-space: normal !important;
+            font-size: 0.8rem !important;
+            font-weight: 600 !important;
+            color: #155DFD !important;
+            background: #eff6ff !important;
+            border-radius: 8px !important;
+            text-decoration: none !important;
+            outline: 2px solid rgba(21, 93, 253, 0.45) !important;
+            outline-offset: 2px !important;
+            box-shadow: 0 2px 10px rgba(21, 93, 253, 0.12) !important;
+        }
+
+        .wcb-qv-top {
             display: grid !important;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr) !important;
+            grid-template-rows: minmax(0, 1fr) !important;
+            gap: 0 !important;
+            align-items: stretch !important;
+            flex: 1 1 auto !important;
+            min-height: 0 !important;
+            margin-top: 0 !important;
+            overflow: hidden !important;
         }
 
         /* ── LEFT: Gallery ── */
         .wcb-qv-left {
             position: relative !important;
-            background: #f8fafc !important;
-            padding: 1.75rem !important;
+            background: linear-gradient(165deg, #f1f5f9 0%, #f8fafc 45%, #ffffff 100%) !important;
+            padding: 1.65rem 1.5rem 1.5rem !important;
             display: flex !important;
             flex-direction: column !important;
-            border-radius: 20px 0 0 20px !important;
+            border-radius: 20px 0 0 0 !important;
+            border-right: 1px solid rgba(226, 232, 240, 0.95) !important;
             min-height: 0 !important;
+            height: 100% !important;
+            max-height: none !important;
+            align-self: stretch !important;
+            overflow-x: hidden !important;
+            overflow-y: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            scrollbar-gutter: stable !important;
+        }
+
+        .wcb-qv-left::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        .wcb-qv-left::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 10px;
         }
 
         .wcb-qv-main-img-wrap {
-            flex: 1 !important;
+            flex: 1 1 auto !important;
             display: flex !important;
             align-items: center !important;
             justify-content: center !important;
-            min-height: 280px !important;
-            max-height: 380px !important;
+            min-height: 200px !important;
+            max-height: none !important;
             overflow: hidden !important;
         }
 
@@ -422,33 +745,69 @@ add_action('wp_head', function () {
 
         /* ── RIGHT: Product Info ── */
         .wcb-qv-right {
-            padding: 2rem 2rem 2rem 1.5rem !important;
+            padding: 1.55rem 3rem 1.65rem 1.65rem !important;
             display: flex !important;
             flex-direction: column !important;
+            min-height: 0 !important;
+            height: 100% !important;
+            max-height: none !important;
+            align-self: stretch !important;
+            overflow-x: hidden !important;
             overflow-y: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            border-radius: 0 20px 0 0 !important;
+            scrollbar-gutter: stable !important;
+            background: linear-gradient(180deg, #ffffff 0%, #fafbfc 55%, #f8fafc 100%) !important;
+        }
+
+        #wcb-qv-pdp-buybox {
+            flex: 1 1 auto !important;
+            min-height: 0 !important;
+            width: 100% !important;
+            overflow-y: auto !important;
+            margin-bottom: 14px !important;
+        }
+
+        .wcb-qv-right > .wcb-qv-full-link {
+            margin-top: auto !important;
+            flex-shrink: 0 !important;
+        }
+
+        #wcb-qv-pdp-buybox .wcb-pdp-divider--buybox {
+            margin: 0.75rem 0 0.65rem !important;
+        }
+
+        .wcb-qv-right::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        .wcb-qv-right::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 10px;
         }
 
         .wcb-qv-cat {
-            font-size: 0.68rem !important;
+            font-size: 0.65rem !important;
             font-weight: 700 !important;
-            letter-spacing: 0.12em !important;
+            letter-spacing: 0.11em !important;
             text-transform: uppercase !important;
             color: #155DFD !important;
             display: inline-block !important;
-            margin-bottom: 0.5rem !important;
-            background: none !important;
+            margin: 0 0 0.55rem !important;
             padding: 0 !important;
             border-radius: 0 !important;
+            background: none !important;
+            line-height: 1.2 !important;
         }
 
         .wcb-qv-title {
             font-family: 'Inter', system-ui, sans-serif !important;
-            font-size: 1.3rem !important;
+            font-size: 1.38rem !important;
             font-weight: 800 !important;
             color: #0f172a !important;
-            margin: 0 0 0.6rem !important;
-            line-height: 1.3 !important;
-            letter-spacing: -0.01em !important;
+            margin: 0 0 0.65rem !important;
+            line-height: 1.22 !important;
+            letter-spacing: -0.02em !important;
         }
 
         /* ── Rating ── */
@@ -536,8 +895,8 @@ add_action('wp_head', function () {
         .wcb-qv-specs {
             display: flex !important;
             flex-wrap: wrap !important;
-            gap: 6px !important;
-            margin: 0.75rem 0 !important;
+            gap: 8px !important;
+            margin: 0.35rem 0 0.85rem !important;
         }
 
         .wcb-qv-spec {
@@ -802,13 +1161,13 @@ add_action('wp_head', function () {
             font-size: 0.85rem !important;
             color: #334155 !important;
             text-decoration: none !important;
-            margin-top: 0.5rem !important;
+            margin-top: 1.1rem !important;
             font-weight: 600 !important;
             transition: all 0.15s ease !important;
             border: 1.5px solid #e2e8f0 !important;
             border-radius: 10px !important;
             padding: 11px 20px !important;
-            background: #fff !important;
+            background: rgba(255, 255, 255, 0.92) !important;
             width: 100% !important;
             text-align: center !important;
         }
@@ -827,26 +1186,36 @@ add_action('wp_head', function () {
 
             .wcb-qv-modal {
                 border-radius: 16px !important;
-                max-height: 92vh !important;
+                height: min(80vh, calc(100dvh - 2.5rem)) !important;
+                max-height: min(80vh, calc(100dvh - 2.5rem)) !important;
+            }
+
+            .wcb-qv-top {
+                grid-template-columns: 1fr !important;
             }
 
             #wcb-qv-content {
-                grid-template-columns: 1fr !important;
-                padding: 0 !important;
+                max-height: none !important;
             }
 
             .wcb-qv-left {
+                max-height: none !important;
+                overflow-y: visible !important;
                 border-radius: 16px 16px 0 0 !important;
+                border-right: none !important;
+                padding: 1.25rem !important;
+            }
+
+            .wcb-qv-right {
+                border-radius: 0 !important;
+                max-height: none !important;
+                overflow-y: visible !important;
                 padding: 1.25rem !important;
             }
 
             .wcb-qv-main-img-wrap {
                 min-height: 200px !important;
                 max-height: 260px !important;
-            }
-
-            .wcb-qv-right {
-                padding: 1.25rem !important;
             }
 
             .wcb-qv-title {
@@ -899,7 +1268,10 @@ function wcb_verify_public_ajax_request()
 {
     $nonce = isset($_REQUEST['nonce']) ? sanitize_text_field(wp_unslash($_REQUEST['nonce'])) : '';
     if (!wp_verify_nonce($nonce, 'wcb_public_ajax')) {
-        wp_send_json_error(['message' => 'invalid_nonce'], 403);
+        wp_send_json_error([
+            'code' => 'invalid_request',
+            'message' => __('Pedido inválido ou sessão expirada.', 'wcb-theme'),
+        ], 403);
     }
 }
 
@@ -918,7 +1290,10 @@ function wcb_rate_limit_public_ajax($bucket, $max = 120)
     $key = 'wcb_rl_' . sanitize_key($bucket) . '_' . md5($ip);
     $n = (int) get_transient($key);
     if ($n >= $max) {
-        wp_send_json_error(['message' => 'rate_limited'], 429);
+        wp_send_json_error([
+            'code' => 'rate_limited',
+            'message' => __('Muitas solicitações. Aguarde um momento e tente de novo.', 'wcb-theme'),
+        ], 429);
     }
     set_transient($key, $n + 1, 10 * MINUTE_IN_SECONDS);
 }
@@ -1039,6 +1414,13 @@ add_action('wp_footer', function () {
             if (!toggle || !sidebar) return;
 
             function openSidebar() {
+                if (typeof window.wcbNavCloseMobile === 'function') {
+                    window.wcbNavCloseMobile();
+                }
+                var searchBox = document.getElementById('wcb-search');
+                if (searchBox) {
+                    searchBox.classList.remove('active');
+                }
                 sidebar.classList.add('is-open');
                 overlay && overlay.classList.add('is-visible');
                 document.body.classList.add('wcb-sidebar-open');
@@ -1090,6 +1472,75 @@ function wcb_enqueue_qty_stepper_script()
     }
 }
 add_action('wp_enqueue_scripts', 'wcb_enqueue_qty_stepper_script', 99);
+
+/**
+ * Xoo Side Cart: painel branco parcial na viewport (~tablet) quando o CSS fechado do plugin
+ * (right:-cartWidth + width 95%) perde para agregação/minify ou ordem de folhas.
+ * Sincroniza posição via estilo inline só quando fechado; ao abrir remove para animação/CSS do tema.
+ */
+function wcb_xoo_side_cart_drawer_offscreen_inline_script()
+{
+    if (! wp_script_is('xoo-wsc-main-js', 'enqueued')) {
+        return;
+    }
+    if (! function_exists('wcb_is_side_cart_active') || ! wcb_is_side_cart_active()) {
+        return;
+    }
+    $js = <<<'JS'
+(function () {
+    function wcbXooPanelPosition(el, open, rtl) {
+        if (open) {
+            el.style.removeProperty('right');
+            el.style.removeProperty('left');
+            return;
+        }
+        if (rtl) {
+            el.style.setProperty('left', 'calc(-100vw - 24px)', 'important');
+            el.style.setProperty('right', 'auto', 'important');
+        } else {
+            el.style.setProperty('right', 'calc(-100vw - 24px)', 'important');
+            el.style.setProperty('left', 'auto', 'important');
+        }
+    }
+    function wcbXooSyncDrawerPosition() {
+        var body = document.body;
+        if (!body) {
+            return;
+        }
+        var rtl = body.classList.contains('rtl');
+        var cartOpen = body.classList.contains('xoo-wsc-cart-active');
+        var sliderOpen = body.classList.contains('xoo-wsc-slider-active');
+        document.querySelectorAll('.xoo-wsc-markup .xoo-wsc-container').forEach(function (el) {
+            wcbXooPanelPosition(el, cartOpen, rtl);
+        });
+        document.querySelectorAll('.xoo-wsc-slider').forEach(function (el) {
+            wcbXooPanelPosition(el, sliderOpen, rtl);
+        });
+    }
+    function wcbXooBindFragments() {
+        if (typeof jQuery === 'undefined') {
+            return;
+        }
+        jQuery(document.body)
+            .off('xoo_wsc_cart_toggled.wcbDrawerOffscreen wc_fragments_refreshed.wcbDrawerOffscreen')
+            .on('xoo_wsc_cart_toggled.wcbDrawerOffscreen wc_fragments_refreshed.wcbDrawerOffscreen', function () {
+                window.requestAnimationFrame(wcbXooSyncDrawerPosition);
+            });
+    }
+    function wcbXooInit() {
+        wcbXooSyncDrawerPosition();
+        wcbXooBindFragments();
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', wcbXooInit);
+    } else {
+        wcbXooInit();
+    }
+})();
+JS;
+    wp_add_inline_script('xoo-wsc-main-js', $js, 'after');
+}
+add_action('wp_enqueue_scripts', 'wcb_xoo_side_cart_drawer_offscreen_inline_script', 100);
 
 /* ============================================================
    🎁 GIFT PROGRESS BAR — payload (AJAX + primeira pintura no carrinho em blocos)
@@ -2054,7 +2505,7 @@ function wcb_gift_progress_bar()
                 subtotal: <?php echo round($subtotal, 2); ?>,
                 gift_progress: <?php echo round($gift_progress, 1); ?>,
                 gift_unlocked: <?php echo $gift_unlocked ? 'true' : 'false'; ?>,
-                gift_text: '<?php echo addslashes($gift_text); ?>',
+                gift_text: <?php echo wp_json_encode($gift_text); ?>,
                 ship_progress: <?php echo round($ship_progress, 1); ?>,
                 ship_remaining: <?php echo round($ship_remaining, 2); ?>,
                 ship_unlocked: <?php echo $ship_unlocked ? 'true' : 'false'; ?>,
@@ -2621,11 +3072,11 @@ function wcb_gift_progress_bar()
                 var icon = WCB_SVG_TRUCK;
                 if (d.ship_unlocked) {
                     icon = WCB_SVG_SHIP_OK;
-                    text = '<strong class="wcb-incentive-accent"><?php echo esc_js(__('Frete grátis', 'wcb-theme')); ?></strong> <?php echo esc_js(__('desbloqueado!', 'wcb-theme')); ?>';
+                    text = '<strong class="wcb-incentive-accent">' + <?php echo wp_json_encode(__('Frete grátis', 'wcb-theme')); ?> + '</strong> ' + <?php echo wp_json_encode(__('desbloqueado!', 'wcb-theme')); ?>;
                 } else if (d.subtotal <= 0) {
-                    text = '<?php echo esc_js(__('Compre', 'wcb-theme')); ?> <strong class="wcb-incentive-accent">R$ ' + Number(shipThreshold).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) + '</strong> <?php echo esc_js(__('para', 'wcb-theme')); ?> <strong class="wcb-incentive-accent"><?php echo esc_js(__('frete grátis', 'wcb-theme')); ?></strong>';
+                    text = <?php echo wp_json_encode(__('Compre', 'wcb-theme')); ?> + ' <strong class="wcb-incentive-accent">R$ ' + Number(shipThreshold).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) + '</strong> ' + <?php echo wp_json_encode(__('para', 'wcb-theme')); ?> + ' <strong class="wcb-incentive-accent">' + <?php echo wp_json_encode(__('frete grátis', 'wcb-theme')); ?> + '</strong>';
                 } else {
-                    text = '<?php echo esc_js(__('Faltam', 'wcb-theme')); ?> <strong class="wcb-incentive-accent">R$ ' + Number(d.ship_remaining).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) + '</strong> <?php echo esc_js(__('para', 'wcb-theme')); ?> <strong class="wcb-incentive-accent"><?php echo esc_js(__('frete grátis', 'wcb-theme')); ?></strong>';
+                    text = <?php echo wp_json_encode(__('Faltam', 'wcb-theme')); ?> + ' <strong class="wcb-incentive-accent">R$ ' + Number(d.ship_remaining).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) + '</strong> ' + <?php echo wp_json_encode(__('para', 'wcb-theme')); ?> + ' <strong class="wcb-incentive-accent">' + <?php echo wp_json_encode(__('frete grátis', 'wcb-theme')); ?> + '</strong>';
                 }
                 return '<div class="' + cls + '" id="wcb-ship-bar">' +
                     '<span class="wcb-incentive-suite__kicker">' + WCB_KICKER_SHIP + '</span>' +
@@ -3057,10 +3508,10 @@ function wcb_gift_progress_bar()
                     gift_progress: sub > 0 ? Math.min(100, (sub / giftThreshold) * 100) : 0,
                     gift_unlocked: sub >= giftThreshold,
                     gift_text: sub <= 0
-                        ? '<?php echo esc_js(__('Adicione produtos para ganhar um <strong class="wcb-incentive-accent">brinde grátis</strong>!', 'wcb-theme')); ?>'
+                        ? <?php echo wp_json_encode(__('Adicione produtos para ganhar um <strong class="wcb-incentive-accent">brinde grátis</strong>!', 'wcb-theme')); ?>
                         : (sub >= giftThreshold
-                            ? '<?php echo esc_js(__('<strong class="wcb-incentive-accent">Parabéns!</strong> Você ganhou um <strong class="wcb-incentive-accent">brinde</strong>!', 'wcb-theme')); ?>'
-                            : '<?php echo esc_js(__('Faltam', 'wcb-theme')); ?> <strong class="wcb-incentive-accent">R$ ' + gRem.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) + '</strong> <?php echo esc_js(__('para', 'wcb-theme')); ?> <strong class="wcb-incentive-accent"><?php echo esc_js(__('ganhar um brinde!', 'wcb-theme')); ?></strong>'),
+                            ? <?php echo wp_json_encode(__('<strong class="wcb-incentive-accent">Parabéns!</strong> Você ganhou um <strong class="wcb-incentive-accent">brinde</strong>!', 'wcb-theme')); ?>
+                            : <?php echo wp_json_encode(__('Faltam', 'wcb-theme')); ?> + ' <strong class="wcb-incentive-accent">R$ ' + gRem.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) + '</strong> ' + <?php echo wp_json_encode(__('para', 'wcb-theme')); ?> + ' <strong class="wcb-incentive-accent">' + <?php echo wp_json_encode(__('ganhar um brinde!', 'wcb-theme')); ?> + '</strong>'),
                     ship_progress: sub > 0 ? Math.min(100, (sub / shipThreshold) * 100) : 0,
                     ship_remaining: sRem,
                     ship_unlocked: sub >= shipThreshold
@@ -3153,10 +3604,46 @@ function wcb_live_search_handler()
         wp_send_json([]);
     }
 
-    $cache_key = 'wcb_ls_v1_' . md5(strtolower($query));
+    $cache_key = 'wcb_ls_v2_' . md5(strtolower($query));
     $cached = get_transient($cache_key);
     if ($cached !== false && is_array($cached)) {
         wp_send_json($cached);
+    }
+
+    // Super Ofertas (sem exclusões da homepage) — cache curto por lista em promoção.
+    $flash_id_set = array();
+    if (function_exists('wcb_super_ofertas_build_context')) {
+        $on_sale_for_so = get_transient('wcb_on_sale_ids');
+        if (false === $on_sale_for_so) {
+            $on_sale_for_so = wc_get_product_ids_on_sale();
+            set_transient('wcb_on_sale_ids', $on_sale_for_so, HOUR_IN_SECONDS);
+        }
+        if (!empty($on_sale_for_so)) {
+            $flash_cache_key = 'wcb_ls_flash_set_' . md5(wp_json_encode(array_values(array_map('intval', $on_sale_for_so))));
+            $flash_cached = get_transient($flash_cache_key);
+            if (false !== $flash_cached && is_array($flash_cached)) {
+                $flash_id_set = array_fill_keys($flash_cached, true);
+            } else {
+                $so_ctx_quick = wcb_super_ofertas_build_context($on_sale_for_so, array());
+                $fid = array();
+                if (is_array($so_ctx_quick)) {
+                    if (!empty($so_ctx_quick['hero_id'])) {
+                        $fid[] = (int) $so_ctx_quick['hero_id'];
+                    }
+                    if (!empty($so_ctx_quick['hero_id_2'])) {
+                        $fid[] = (int) $so_ctx_quick['hero_id_2'];
+                    }
+                    if (!empty($so_ctx_quick['carousel_ids']) && is_array($so_ctx_quick['carousel_ids'])) {
+                        foreach ($so_ctx_quick['carousel_ids'] as $cid) {
+                            $fid[] = (int) $cid;
+                        }
+                    }
+                }
+                $fid = array_values(array_unique(array_filter($fid)));
+                set_transient($flash_cache_key, $fid, 15 * MINUTE_IN_SECONDS);
+                $flash_id_set = array_fill_keys($fid, true);
+            }
+        }
     }
 
     $like = '%' . $wpdb->esc_like($query) . '%';
@@ -3243,8 +3730,9 @@ function wcb_live_search_handler()
             }
         }
 
-        $rating = round((float) $product->get_average_rating(), 1);
-        $rating_count = (int) $product->get_rating_count();
+        $wcb_rs       = wcb_get_product_rating_display_stats( $post_id );
+        $rating       = (float) $wcb_rs['average'];
+        $rating_count = (int) $wcb_rs['count'];
         $total_sales = (int) get_post_meta($post_id, 'total_sales', true);
         $is_bestseller = $total_sales > 20;
         $is_trending = $total_sales > 5 && $total_sales <= 20;
@@ -3292,6 +3780,7 @@ function wcb_live_search_handler()
             'is_new' => $is_new,
             'brand' => $brand,
             'in_stock' => $product->is_in_stock(),
+            'is_flash_offer' => isset($flash_id_set[$post_id]),
         ];
     }
 
@@ -3313,12 +3802,33 @@ function wcb_quick_view_handler()
 
     $product_id = intval($_GET['product_id'] ?? 0);
     if (!$product_id) {
-        wp_send_json_error('invalid_product');
+        wp_send_json_error([
+            'code' => 'invalid_request',
+            'message' => __('Pedido inválido.', 'wcb-theme'),
+        ], 400);
     }
 
     $product = wc_get_product($product_id);
     if (!$product) {
-        wp_send_json_error('product_not_found');
+        wp_send_json_error([
+            'code' => 'invalid_request',
+            'message' => __('Produto indisponível.', 'wcb-theme'),
+        ], 404);
+    }
+
+    $post = get_post($product_id);
+    if (!$post || $post->post_type !== 'product' || $post->post_status !== 'publish') {
+        wp_send_json_error([
+            'code' => 'invalid_request',
+            'message' => __('Produto indisponível.', 'wcb-theme'),
+        ], 404);
+    }
+
+    if (!$product->is_visible()) {
+        wp_send_json_error([
+            'code' => 'invalid_request',
+            'message' => __('Produto indisponível.', 'wcb-theme'),
+        ], 404);
     }
 
     // ── Prices ────────────────────────────────────────────────
@@ -3363,9 +3873,10 @@ function wcb_quick_view_handler()
     $terms = get_the_terms($product_id, 'product_cat');
     $cat_name = (!empty($terms) && !is_wp_error($terms)) ? $terms[0]->name : '';
 
-    // ── Rating ────────────────────────────────────────────────
-    $rating_count = $product->get_rating_count();
-    $avg_rating = round((float) $product->get_average_rating(), 1);
+    // ── Rating (comentários aprovados + meta rating, igual cards / PDP) ───
+    $wcb_qv_rs    = wcb_get_product_rating_display_stats( $product_id );
+    $rating_count = (int) $wcb_qv_rs['count'];
+    $avg_rating   = (float) $wcb_qv_rs['average'];
 
     // ── Stock ─────────────────────────────────────────────────
     $stock_qty = $product->get_stock_quantity();
@@ -3463,12 +3974,22 @@ function wcb_quick_view_handler()
                 'regular_price' => $var_regular > 0 ? 'R$ ' . number_format($var_regular, 2, ',', '.') : '',
                 'current_price' => $var_price > 0 ? 'R$ ' . number_format($var_price, 2, ',', '.') : '',
                 'pix_price' => $var_pix > 0 ? 'R$ ' . number_format($var_pix, 2, ',', '.') : '',
-                'installments' => $var_price >= 30 ? 'ou 12x no cartão' : '',
+                'installments' => $var_price > 0 ? 'ou 12x no cartão' : '',
                 'is_on_sale' => $var_on_sale,
                 'saving' => $var_saving,
                 'image_url' => $var_image,
                 'image_thumb' => $var_image_thumb,
             ];
+        }
+    }
+
+    $buybox_html = '';
+    if ( $product->is_type( 'variable' ) && function_exists( 'wcb_render_quick_view_variable_buybox' ) ) {
+        $vp = wc_get_product( $product_id );
+        if ( $vp instanceof WC_Product_Variable ) {
+            ob_start();
+            wcb_render_quick_view_variable_buybox( $vp );
+            $buybox_html = ob_get_clean();
         }
     }
 
@@ -3484,7 +4005,7 @@ function wcb_quick_view_handler()
         'regular_price' => $regular_price > 0 ? 'R$ ' . number_format($regular_price, 2, ',', '.') : '',
         'current_price' => $current_price > 0 ? 'R$ ' . number_format($current_price, 2, ',', '.') : 'Consulte',
         'pix_price' => $pix_price > 0 ? 'R$ ' . number_format($pix_price, 2, ',', '.') : '',
-        'installments' => $current_price >= 30 ? 'ou 12x no cartão' : '',
+        'installments' => $current_price > 0 ? 'ou 12x no cartão' : '',
         'rating_count' => $rating_count,
         'avg_rating' => $avg_rating,
         'low_stock' => $low_stock,
@@ -3500,6 +4021,7 @@ function wcb_quick_view_handler()
         'variation_attributes' => $variation_attributes,
         'variations' => $variations_data,
         'default_attributes' => $default_attributes,
+        'buybox_html' => $buybox_html,
     ]);
 }
 add_action('wp_ajax_wcb_quick_view', 'wcb_quick_view_handler');
@@ -3528,7 +4050,7 @@ function wcb_quick_view_modal_html()
                 <span>Carregando produto...</span>
             </div>
             <!-- Content populated by JS -->
-            <div id="wcb-qv-content" class="wcb-qv-content" style="display:none"></div>
+            <div id="wcb-qv-content" class="wcb-qv-content"></div>
         </div>
     </div>
     <?php
@@ -3648,16 +4170,16 @@ function wcb_wishlist_endpoint_content()
                 setup_postdata($post);
                 ?>
                 <div class="wcb-wl-card wcb-wl-card-shell" data-product-id="<?php echo esc_attr((string) $pid); ?>">
-                    <button type="button" class="wcb-wl-card__remove" data-product-id="<?php echo esc_attr((string) $pid); ?>"
-                        aria-label="<?php echo esc_attr(__('Remover dos favoritos', 'wcb-theme')); ?>"
-                        title="<?php echo esc_attr(__('Remover dos favoritos', 'wcb-theme')); ?>">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-                            <line x1="18" y1="6" x2="6" y2="18" />
-                            <line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
-                    </button>
-                    <?php get_template_part('template-parts/product', 'card'); ?>
+                    <?php
+                    get_template_part(
+                        'template-parts/product-card',
+                        null,
+                        array(
+                            'product'        => $wc_product,
+                            'wishlist_page'  => true,
+                        )
+                    );
+                    ?>
                 </div>
                 <?php
                 wp_reset_postdata();
@@ -3765,29 +4287,23 @@ function wcb_render_pdp_buybox_subtotal_markup()
     }
 
     $printed = true;
-    ?>
-    <div class="wcb-pdp-subtotal" id="wcb-pdp-subtotal" style="display:none;">
-        <div class="wcb-pdp-subtotal__row">
-            <div class="wcb-pdp-subtotal__label">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
-                    <line x1="1" y1="10" x2="23" y2="10" />
-                </svg>
-                <span>Subtotal <small id="wcb-pdp-subtotal-qty">(1 item)</small></span>
-            </div>
-            <div class="wcb-pdp-subtotal__value">
-                <span class="wcb-pdp-subtotal__price" id="wcb-pdp-subtotal-price">R$ 0,00</span>
-            </div>
-        </div>
-        <div class="wcb-pdp-subtotal__pix" id="wcb-pdp-subtotal-pix">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                <polyline points="20 6 9 17 4 12" />
-            </svg>
-            <span id="wcb-pdp-subtotal-pix-val">R$ 0,00 no PIX (5% off)</span>
-        </div>
-    </div>
-    <?php
+    wcb_buybox_print_subtotal_markup( 'wcb-pdp' );
 }
+
+/**
+ * Quick View (buybox variável AJAX): subtotal com IDs wcb-qv-pdp-*.
+ */
+function wcb_qv_output_subtotal_after_variations_table() {
+    if ( empty( $GLOBALS['wcb_qv_variable_buybox_render'] ) ) {
+        return;
+    }
+    global $product;
+    if ( ! $product instanceof WC_Product || ! $product->is_type( 'variable' ) || ! $product->is_in_stock() ) {
+        return;
+    }
+    wcb_buybox_print_subtotal_markup( 'wcb-qv-pdp' );
+}
+add_action( 'woocommerce_after_variations_table', 'wcb_qv_output_subtotal_after_variations_table', 6 );
 
 /**
  * Produto variável: após a tabela de atributos, antes de .single_variation_wrap / .woocommerce-variation-add-to-cart.
@@ -3855,3 +4371,108 @@ function wcb_render_cart_page_breadcrumb()
     </nav>
     <?php
 }
+
+/**
+ * ACF: grupo de campos do timer da barra de oferta na PDP (produto).
+ */
+function wcb_register_acf_pdp_offer_timer_fields()
+{
+    if (!function_exists('acf_add_local_field_group')) {
+        return;
+    }
+
+    acf_add_local_field_group(array(
+        'key' => 'group_wcb_pdp_offer_timer',
+        'title' => 'WCB — Timer barra de oferta (PDP)',
+        'fields' => array(
+            array(
+                'key' => 'field_wcb_pdp_offer_timer_scope',
+                'label' => __('Timer da oferta (countdown)', 'wcb-theme'),
+                'name' => 'wcb_pdp_offer_timer_scope',
+                'type' => 'select',
+                'instructions' => __('Automático: global para produtos na categoria Super Ofertas (slugs super-ofertas ou ofertas-relampago; filtrável); nos restantes, por produto.', 'wcb-theme'),
+                'choices' => array(
+                    'auto' => __('Automático (Super Ofertas = global; resto = por produto)', 'wcb-theme'),
+                    'global' => __('Global — mesmo tempo que outros PDPs em modo global (sessão do separador)', 'wcb-theme'),
+                    'product' => __('Por produto — countdown só deste produto', 'wcb-theme'),
+                ),
+                'default_value' => 'auto',
+                'return_format' => 'value',
+                'ui' => 1,
+            ),
+        ),
+        'location' => array(
+            array(
+                array(
+                    'param' => 'post_type',
+                    'operator' => '==',
+                    'value' => 'product',
+                ),
+            ),
+        ),
+        'position' => 'side',
+        'active' => true,
+    ));
+}
+
+add_action('acf/init', 'wcb_register_acf_pdp_offer_timer_fields');
+
+/**
+ * Sem ACF: campo nativo WooCommerce (mesma meta key que o ACF usaria no produto).
+ */
+function wcb_render_pdp_offer_timer_wc_field()
+{
+    global $post;
+
+    if (!is_object($post) || function_exists('acf_add_local_field_group')) {
+        return;
+    }
+
+    $val = get_post_meta($post->ID, 'wcb_pdp_offer_timer_scope', true);
+    if (!is_string($val)) {
+        $val = '';
+    }
+
+    echo '<div class="options_group wcb-pdp-offer-timer-field">';
+    woocommerce_wp_select(
+        array(
+            'id' => 'wcb_pdp_offer_timer_scope',
+            'name' => 'wcb_pdp_offer_timer_scope',
+            'value' => $val,
+            'label' => __('Timer barra de oferta (PDP)', 'wcb-theme'),
+            'options' => array(
+                '' => __('Automático (Super Ofertas = global; resto = por produto)', 'wcb-theme'),
+                'global' => __('Global (sessão do separador)', 'wcb-theme'),
+                'product' => __('Por produto', 'wcb-theme'),
+            ),
+            'desc_tip' => true,
+            'description' => __('Categorias equivalentes: super-ofertas ou ofertas-relampago. Em Automático o countdown é global. Produtos → Categorias.', 'wcb-theme'),
+        )
+    );
+    echo '</div>';
+}
+
+add_action('woocommerce_product_options_general_product_data', 'wcb_render_pdp_offer_timer_wc_field', 16);
+
+/**
+ * @param WC_Product $product
+ */
+function wcb_save_pdp_offer_timer_wc_field($product)
+{
+    if (function_exists('acf_add_local_field_group')) {
+        return;
+    }
+
+    if (!isset($_POST['wcb_pdp_offer_timer_scope'])) {
+        return;
+    }
+
+    $v = sanitize_text_field(wp_unslash($_POST['wcb_pdp_offer_timer_scope']));
+    if ($v === '') {
+        $product->delete_meta_data('wcb_pdp_offer_timer_scope');
+    } elseif (in_array($v, array('global', 'product'), true)) {
+        $product->update_meta_data('wcb_pdp_offer_timer_scope', $v);
+    }
+}
+
+add_action('woocommerce_admin_process_product_object', 'wcb_save_pdp_offer_timer_wc_field', 10, 1);

@@ -10,9 +10,40 @@
  * @package WCB_Theme
  */
 
-global $product;
-if (!$product)
-    return;
+/*
+ * Fonte do WC_Product (evita misturar produto da PDP com cards em loops secundários):
+ * 1) wc_get_product( get_the_ID() ) quando o post atual é product — alinha título, link e avaliações ao mesmo ID.
+ * 2) $product injetado por get_template_part( ..., array( 'product' => … ) ) — não pode vir depois de global $product
+ *    no topo (isso anulava o inject e mantinha o global da PDP).
+ * 3) global $product como último recurso.
+ */
+$wcb_pc_track = isset( $GLOBALS['wcb_product_card_track'] ) && is_array( $GLOBALS['wcb_product_card_track'] )
+	? $GLOBALS['wcb_product_card_track']
+	: null;
+
+$wcb_injected_product = ( isset( $product ) && $product instanceof WC_Product ) ? $product : null;
+
+$product    = null;
+$wcb_post_id = (int) get_the_ID();
+if ( $wcb_post_id > 0 && get_post_type( $wcb_post_id ) === 'product' ) {
+	$p_by_loop = wc_get_product( $wcb_post_id );
+	if ( $p_by_loop instanceof WC_Product ) {
+		$product = $p_by_loop;
+	}
+}
+if ( ! $product instanceof WC_Product && $wcb_injected_product instanceof WC_Product ) {
+	$product = $wcb_injected_product;
+}
+if ( ! $product instanceof WC_Product ) {
+	global $product;
+}
+if ( ! $product instanceof WC_Product ) {
+	return;
+}
+
+$wcb_fav_btn_label = ! empty( $wishlist_page )
+	? __( 'Remover dos favoritos', 'wcb-theme' )
+	: __( 'Favoritar', 'wcb-theme' );
 
 /* ── Prices ────────────────────────────────────────────── */
 $regular_price = (float) $product->get_regular_price();
@@ -35,19 +66,7 @@ $low_stock   = $stock_qty !== null && $stock_qty > 0 && $stock_qty <= 5;
 $total_sales = (int) get_post_meta($product->get_id(), 'total_sales', true);
 $is_popular  = $total_sales >= 20;
 
-/* ── Stock bar (dynamic) ──────────────────────────────── */
-$show_stock_bar = ($stock_qty !== null && $stock_qty > 0 && $stock_qty <= 20 && $in_stock);
-$stock_max      = max($stock_qty + $total_sales, 50); // virtual max
-$stock_pct      = $stock_qty !== null && $stock_max > 0 ? round(($stock_qty / $stock_max) * 100) : 100;
-if ($stock_pct > 60) {
-    $stock_level = '';
-} elseif ($stock_pct > 30) {
-    $stock_level = 'warning';
-} elseif ($stock_pct > 10) {
-    $stock_level = 'low';
-} else {
-    $stock_level = 'critical';
-}
+/* ── Stock bar: desativada em todos os cards (sem .wcb-stock-bar / __label) ── */
 
 /* ── Category ──────────────────────────────────────────── */
 $cat_name = '';
@@ -56,9 +75,10 @@ if ($terms && !is_wp_error($terms)) {
     $cat_name = $terms[0]->name;
 }
 
-/* ── Rating ────────────────────────────────────────────── */
-$rating_count = $product->get_rating_count();
-$avg_rating   = round((float) $product->get_average_rating(), 1);
+/* ── Rating: comentários aprovados com estrelas (alinhado à aba Avaliações) ── */
+$wcb_rating_stats = wcb_get_product_rating_display_stats( $product->get_id() );
+$review_count     = (int) $wcb_rating_stats['count'];
+$avg_rating       = (float) $wcb_rating_stats['average'];
 
 /* ── Teor / Nicotina ───────────────────────────────────── */
 $teor_values = [];
@@ -99,7 +119,12 @@ if ($product->is_type('variable')) {
 }
 ?>
 
-<div class="wcb-product-card<?php echo !$in_stock ? ' wcb-product-card--out-of-stock' : ''; ?>" data-product-id="<?php echo $product->get_id(); ?>">
+<div class="wcb-product-card<?php echo !$in_stock ? ' wcb-product-card--out-of-stock' : ''; ?>" data-product-id="<?php echo esc_attr( (string) $product->get_id() ); ?>"
+	<?php
+	if ( $wcb_pc_track && ! empty( $wcb_pc_track['wcb_track'] ) && ! empty( $wcb_pc_track['role'] ) ) {
+		echo ' data-wcb-track="' . esc_attr( (string) $wcb_pc_track['wcb_track'] ) . '" data-role="' . esc_attr( (string) $wcb_pc_track['role'] ) . '"';
+	}
+	?>>
 
     <!-- ══ IMAGE AREA ══════════════════════════════════════ -->
     <div class="wcb-product-card__img-wrap">
@@ -120,7 +145,9 @@ if ($product->is_type('variable')) {
         </div>
 
         <!-- Favorite (top-right) -->
-        <button class="wcb-product-card__fav" title="Favoritar" data-product-id="<?php echo $product->get_id(); ?>">
+        <button type="button" class="wcb-product-card__fav" title="<?php echo esc_attr( $wcb_fav_btn_label ); ?>"
+            aria-label="<?php echo esc_attr( $wcb_fav_btn_label ); ?>"
+            data-product-id="<?php echo esc_attr( (string) $product->get_id() ); ?>">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
@@ -197,22 +224,23 @@ if ($product->is_type('variable')) {
             <?php the_title(); ?>
         </a>
 
-        <!-- Rating -->
-        <div class="wcb-product-card__rating">
-            <?php if ($rating_count > 0): ?>
-                <div class="wcb-product-card__stars" style="--rating: <?php echo $avg_rating; ?>">
-                    <span class="wcb-product-card__stars-fill">★★★★★</span>
-                    <span class="wcb-product-card__stars-empty">★★★★★</span>
-                </div>
-                <span class="wcb-product-card__rating-val"><?php echo number_format($avg_rating, 1); ?></span>
-                <span class="wcb-product-card__rating-count">(<?php echo $rating_count; ?>)</span>
-            <?php else: ?>
-                <div class="wcb-product-card__stars" style="--rating: 4.8">
-                    <span class="wcb-product-card__stars-fill">★★★★★</span>
-                    <span class="wcb-product-card__stars-empty">★★★★★</span>
-                </div>
-                <span class="wcb-product-card__rating-val">4.8</span>
-                <span class="wcb-product-card__rating-count">(<?php echo max($total_sales, rand(12, 128)); ?>)</span>
+        <!-- Rating: sem avaliações = só estrelas neutras; com avaliações = estrelas + nota + (N) -->
+        <div class="wcb-product-card__rating<?php echo $review_count < 1 ? ' wcb-product-card__rating--zero' : ''; ?>"
+            data-wcb-rating-for="<?php echo esc_attr( (string) (int) $product->get_id() ); ?>"
+            <?php
+            if ( $review_count < 1 ) {
+                echo ' aria-label="' . esc_attr__( 'Sem avaliações ainda', 'wcb-theme' ) . '"';
+            }
+            ?>>
+            <div class="wcb-product-card__stars" style="--rating: <?php echo esc_attr( (string) max( 0, min( 5, $avg_rating ) ) ); ?>">
+                <?php if ( $review_count > 0 ) : ?>
+                <span class="wcb-product-card__stars-fill" aria-hidden="true">★★★★★</span>
+                <?php endif; ?>
+                <span class="wcb-product-card__stars-empty" aria-hidden="true">★★★★★</span>
+            </div>
+            <?php if ( $review_count > 0 ) : ?>
+            <span class="wcb-product-card__rating-val"><?php echo esc_html( number_format( (float) $avg_rating, 1 ) ); ?></span>
+            <span class="wcb-product-card__rating-count">(<?php echo esc_html( (string) (int) $review_count ); ?>)</span>
             <?php endif; ?>
         </div>
 
@@ -236,7 +264,7 @@ if ($product->is_type('variable')) {
             <?php endif; ?>
 
             <!-- Parcelamento -->
-            <?php if ($current_price >= 30): ?>
+            <?php if ($current_price > 0): ?>
                 <span class="wcb-product-card__installments">ou 12x no cartão</span>
             <?php endif; ?>
 
@@ -250,23 +278,6 @@ if ($product->is_type('variable')) {
                     <span class="wcb-product-card__teor-pill"><?php echo esc_html($tv); ?></span>
                 <?php endforeach; ?>
             </div>
-        <?php endif; ?>
-
-        <?php if ($show_stock_bar): ?>
-        <!-- Dynamic stock bar -->
-        <div class="wcb-stock-bar">
-            <div class="wcb-stock-bar__fill<?php echo $stock_level ? ' wcb-stock-bar__fill--' . $stock_level : ''; ?>"
-                 style="width: <?php echo $stock_pct; ?>%"></div>
-        </div>
-        <span class="wcb-stock-bar__label<?php echo $stock_level ? ' wcb-stock-bar__label--' . $stock_level : ''; ?>">
-            <?php if ($stock_qty <= 3): ?>
-                🔥 Restam apenas <?php echo $stock_qty; ?> unidade<?php echo $stock_qty > 1 ? 's' : ''; ?>!
-            <?php elseif ($stock_qty <= 10): ?>
-                ⚡ Últimas <?php echo $stock_qty; ?> unidades
-            <?php else: ?>
-                📦 <?php echo $stock_qty; ?> em estoque
-            <?php endif; ?>
-        </span>
         <?php endif; ?>
 
         <?php if ($in_stock): ?>

@@ -64,7 +64,7 @@ function wcb_enqueue_assets() {
     // Google Fonts — Inter (tag não bloqueante via filtro style_loader_tag)
     wp_enqueue_style(
         'wcb-google-fonts',
-        'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap',
+        'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap',
         array( 'wcb-google-fonts-preconnect' ),
         null
     );
@@ -77,11 +77,36 @@ function wcb_enqueue_assets() {
         WCB_VERSION
     );
 
+    wp_enqueue_style(
+        'wcb-paged-carousel-touch',
+        WCB_URI . '/css/wcb-paged-carousel-touch.css',
+        array( 'wcb-style' ),
+        WCB_VERSION
+    );
+
+    $wcb_wc_qv_scripts = class_exists( 'WooCommerce' ) && ! is_cart() && ! is_checkout() && ! is_admin();
+    if ( $wcb_wc_qv_scripts ) {
+        wp_enqueue_script( 'wc-add-to-cart' );
+        wp_enqueue_script( 'wc-add-to-cart-variation' );
+        wp_enqueue_script(
+            'wcb-variation-buybox',
+            WCB_URI . '/js/wcb-variation-buybox.js',
+            array( 'jquery', 'wc-add-to-cart-variation' ),
+            WCB_VERSION,
+            true
+        );
+    }
+
+    $wcb_main_deps = array( 'jquery' );
+    if ( $wcb_wc_qv_scripts ) {
+        $wcb_main_deps[] = 'wcb-variation-buybox';
+    }
+
     // Theme JS
     wp_enqueue_script(
         'wcb-main',
         WCB_URI . '/js/main.js',
-        array(),
+        $wcb_main_deps,
         WCB_VERSION,
         true
     );
@@ -96,18 +121,18 @@ function wcb_enqueue_assets() {
     wp_enqueue_script(
         'wcb-custom-cursor',
         WCB_URI . '/js/custom-cursor.js',
-        array(),
+        array( 'wcb-main' ),
         WCB_VERSION,
         true
     );
 
     // Pass data to JS
     wp_localize_script( 'wcb-main', 'wcbData', array(
-        'ajaxUrl'        => admin_url( 'admin-ajax.php' ),
-        'siteUrl'        => home_url( '/' ),
-        'nonce'          => wp_create_nonce( 'wcb_nonce' ),
-        'miniCartNonce'  => wp_create_nonce( 'wcb-mini-cart' ),
-        'publicAjaxNonce'=> wp_create_nonce( 'wcb_public_ajax' ),
+        'ajaxUrl'         => admin_url( 'admin-ajax.php' ),
+        'siteUrl'         => home_url( '/' ),
+        'nonce'           => wp_create_nonce( 'wcb_nonce' ),
+        'miniCartNonce'   => wp_create_nonce( 'wcb-mini-cart' ),
+        'publicAjaxNonce' => wp_create_nonce( 'wcb_public_ajax' ),
     ) );
 
     // PDP — avaliações: ordenar, filtrar, voto "Útil"
@@ -128,6 +153,13 @@ function wcb_enqueue_assets() {
                     'error' => __( 'Não foi possível registrar. Tente de novo.', 'wcb-theme' ),
                 ),
             )
+        );
+
+        wp_enqueue_style(
+            'wcb-pdp-responsive-phase1',
+            WCB_URI . '/css/wcb-pdp-responsive-phase1.css',
+            array( 'wcb-style' ),
+            WCB_VERSION
         );
     }
 
@@ -167,6 +199,26 @@ function wcb_enqueue_assets() {
             true
         );
     }
+
+    // Fase 3 — navegação global: depois do tema; na loja, depois de wcb-filter (se enfileirado)
+    $wcb_nav_phase3_deps = array( 'wcb-style' );
+    if ( ( is_shop() || is_product_category() || is_product_tag() ) && wp_style_is( 'wcb-filter', 'enqueued' ) ) {
+        $wcb_nav_phase3_deps[] = 'wcb-filter';
+    }
+    wp_enqueue_style(
+        'wcb-navigation-phase3',
+        WCB_URI . '/css/wcb-navigation-responsive-phase3.css',
+        $wcb_nav_phase3_deps,
+        WCB_VERSION
+    );
+
+    // Nav mobile: depende de phase3 → impressão depois dele (cascata correta vs header grid / tablet).
+    wp_enqueue_style(
+        'wcb-nav-mobile-bp',
+        get_template_directory_uri() . '/css/wcb-nav-mobile-bp.css',
+        array( 'wcb-navigation-phase3' ),
+        WCB_VERSION
+    );
 
     $wcb_is_cart_page = class_exists( 'WooCommerce' ) && ( is_cart() || is_page( 'carrinho' ) || is_page( 'cart' ) );
 
@@ -224,6 +276,80 @@ function wcb_enqueue_assets() {
         true
     );
 }
+
+/**
+ * Fase 2 — responsividade unificada carrinho / checkout / CartFlows / side cart.
+ */
+function wcb_enqueue_cart_checkout_responsive_phase2() {
+    if ( ! class_exists( 'WooCommerce' ) || is_admin() ) {
+        return;
+    }
+
+    $on_cart_page = ( function_exists( 'is_cart' ) && is_cart() )
+        || is_page( 'carrinho' )
+        || is_page( 'cart' );
+    $on_checkout  = function_exists( 'is_checkout' ) && is_checkout();
+    $on_cf_step   = is_singular( 'cartflows_step' );
+    $side_cart    = function_exists( 'wcb_is_side_cart_active' ) && wcb_is_side_cart_active();
+
+    if ( ! $on_cart_page && ! $on_checkout && ! $on_cf_step && ! $side_cart ) {
+        return;
+    }
+
+    $deps = array( 'wcb-style' );
+
+    if ( $on_cart_page ) {
+        if ( wp_style_is( 'wcb-cart-premium', 'registered' ) ) {
+            $deps[] = 'wcb-cart-premium';
+        }
+        if ( wp_style_is( 'wcb-side-cart-premium', 'registered' ) ) {
+            $deps[] = 'wcb-side-cart-premium';
+        }
+    }
+
+    if ( $on_checkout || $on_cf_step ) {
+        if ( wp_style_is( 'wcb-checkout-blocks-cartflows', 'registered' ) ) {
+            $deps[] = 'wcb-checkout-blocks-cartflows';
+        }
+    }
+
+    if ( $side_cart && ! $on_cart_page ) {
+        if ( wp_style_is( 'xoo-wsc-style', 'registered' ) ) {
+            $deps[] = 'xoo-wsc-style';
+        }
+        if ( wp_style_is( 'wcb-side-cart-premium', 'registered' ) ) {
+            $deps[] = 'wcb-side-cart-premium';
+        }
+    }
+
+    wp_enqueue_style(
+        'wcb-cart-checkout-responsive-phase2',
+        WCB_URI . '/css/wcb-cart-checkout-responsive-phase2.css',
+        array_values( array_unique( $deps ) ),
+        WCB_VERSION
+    );
+}
+add_action( 'wp_enqueue_scripts', 'wcb_enqueue_cart_checkout_responsive_phase2', 40 );
+
+/**
+ * Buybox variável (PDP + Quick View): swatches, preço por variação, subtotal no QV.
+ */
+function wcb_enqueue_variation_buybox_script() {
+    if ( is_admin() || ! class_exists( 'WooCommerce' ) ) {
+        return;
+    }
+    wp_enqueue_script( 'wc-add-to-cart' );
+    wp_enqueue_script( 'wc-add-to-cart-variation' );
+    wp_enqueue_script(
+        'wcb-variation-buybox',
+        WCB_URI . '/js/wcb-variation-buybox.js',
+        array( 'jquery', 'wc-add-to-cart-variation' ),
+        WCB_VERSION,
+        true
+    );
+}
+add_action( 'wp_enqueue_scripts', 'wcb_enqueue_variation_buybox_script', 20 );
+
 add_action( 'wp_enqueue_scripts', 'wcb_enqueue_assets' );
 
 /* ============================================================
@@ -370,7 +496,7 @@ function wcb_checkout_premium_css_head() {
         // Inject Google Fonts + main theme stylesheet so our injected nav renders correctly
         // (CartFlows Canvas may not enqueue these via normal wp_enqueue_scripts)
         $style_url  = get_stylesheet_uri();
-        $fonts_url  = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap';
+        $fonts_url  = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap';
         echo '<link rel="preconnect" href="https://fonts.googleapis.com">' . "\n";
         echo '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>' . "\n";
         echo wcb_google_fonts_nonblocking_link( $fonts_url );

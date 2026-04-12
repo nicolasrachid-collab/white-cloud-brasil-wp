@@ -17,6 +17,7 @@
  *  inc/customizer.php       — Hero Banner & Super Ofertas customizer
  *  inc/newsletter.php       — Rodapé newsletter (AJAX, opção wcb_nl4_emails)
  *  inc/widgets-sidebar.php  — Widget area registration
+ *  inc/blog-single.php      — Post único: leitura, breadcrumb
  *
  * @package WCB_Theme
  * @version 1.2.0
@@ -28,9 +29,125 @@ if ( ! defined( 'WCB_DEV' ) ) {
 	define( 'WCB_DEV', false );
 }
 
-define( 'WCB_VERSION', '1.4.44' );
+define( 'WCB_VERSION', '1.5.0' );
 define( 'WCB_DIR', get_template_directory() );
 define( 'WCB_URI', get_template_directory_uri() );
+/** Transient do carrossel "Promoções" no header (v3: igual à query da página categoria promocoes — só em oferta). */
+if ( ! defined( 'WCB_PROMO_DD_TRANSIENT' ) ) {
+	define( 'WCB_PROMO_DD_TRANSIENT', 'wcb_promo_dropdown_cards_promocoes_v3' );
+}
+
+/**
+ * tax_query do carrossel Promoções no menu: categoria + mesma visibilidade que o arquivo /categoria-produto/promocoes/.
+ *
+ * @param int $product_cat_term_id term_id (product_cat).
+ * @return array<int, array<string, mixed>>
+ */
+function wcb_promo_dropdown_tax_query( $product_cat_term_id ) {
+	$product_cat_term_id = (int) $product_cat_term_id;
+	$tax_query           = array(
+		'relation' => 'AND',
+		array(
+			'taxonomy'         => 'product_cat',
+			'field'            => 'term_id',
+			'terms'            => $product_cat_term_id,
+			'include_children' => (bool) apply_filters( 'wcb_promo_dropdown_include_child_categories', true ),
+		),
+	);
+
+	if ( function_exists( 'wc_get_product_visibility_term_ids' ) ) {
+		$vis    = wc_get_product_visibility_term_ids();
+		$not_in = array();
+		if ( ! empty( $vis['exclude-from-catalog'] ) ) {
+			$not_in[] = (int) $vis['exclude-from-catalog'];
+		}
+		if ( 'yes' === get_option( 'woocommerce_hide_out_of_stock_items' ) && ! empty( $vis['outofstock'] ) ) {
+			$not_in[] = (int) $vis['outofstock'];
+		}
+		$not_in = array_values( array_filter( $not_in ) );
+		if ( $not_in ) {
+			$tax_query[] = array(
+				'taxonomy' => 'product_visibility',
+				'field'    => 'term_taxonomy_id',
+				'terms'    => $not_in,
+				'operator' => 'NOT IN',
+			);
+		}
+	}
+
+	return apply_filters( 'wcb_promo_dropdown_tax_query', $tax_query, $product_cat_term_id );
+}
+
+/**
+ * Slug da categoria cujo arquivo usa a lógica "só produtos em oferta" (pre_get_posts + dropdown).
+ *
+ * @return string
+ */
+function wcb_promocoes_archive_category_slug() {
+	return apply_filters( 'wcb_promocoes_archive_category_slug', 'promocoes' );
+}
+
+/**
+ * Argumentos do WP_Query do carrossel Promoções no header.
+ * Para a categoria {@see wcb_promocoes_archive_category_slug()}, replica a mesma regra da página do arquivo
+ * (intersecção com wc_get_product_ids_on_sale() ou meta _sale_price, como em pre_get_posts).
+ *
+ * @param int    $product_cat_term_id term_id product_cat.
+ * @param string $product_cat_slug    Slug do termo (ex.: promocoes).
+ * @return array<string, mixed>
+ */
+function wcb_promo_dropdown_wp_query_args( $product_cat_term_id, $product_cat_slug ) {
+	$product_cat_term_id = (int) $product_cat_term_id;
+	$product_cat_slug    = sanitize_title( (string) $product_cat_slug );
+
+	$args = array(
+		'post_type'              => 'product',
+		'post_status'            => 'publish',
+		'posts_per_page'         => 12,
+		'orderby'                => 'rand',
+		'no_found_rows'          => true,
+		'update_post_meta_cache' => false,
+		'update_post_term_cache' => true,
+		'meta_query'             => array(
+			array(
+				'key'   => '_stock_status',
+				'value' => 'instock',
+			),
+		),
+		'tax_query'              => wcb_promo_dropdown_tax_query( $product_cat_term_id ),
+	);
+
+	if ( $product_cat_slug !== wcb_promocoes_archive_category_slug() ) {
+		return apply_filters( 'wcb_promo_dropdown_wp_query_args', $args, $product_cat_term_id, $product_cat_slug );
+	}
+
+	$on_sale_ids = function_exists( 'wc_get_product_ids_on_sale' ) ? wc_get_product_ids_on_sale() : array();
+	if ( empty( $on_sale_ids ) ) {
+		return apply_filters( 'wcb_promo_dropdown_wp_query_args', $args, $product_cat_term_id, $product_cat_slug );
+	}
+
+	$max_post_in = (int) apply_filters( 'wcb_promocoes_post_in_max', 500 );
+	if ( function_exists( 'wcb_promocoes_should_use_post_in' ) && wcb_promocoes_should_use_post_in( $on_sale_ids, $max_post_in ) ) {
+		$args['post__in'] = array_values( array_map( 'absint', $on_sale_ids ) );
+		return apply_filters( 'wcb_promo_dropdown_wp_query_args', $args, $product_cat_term_id, $product_cat_slug );
+	}
+
+	$args['meta_query'] = array(
+		'relation' => 'AND',
+		array(
+			'key'   => '_stock_status',
+			'value' => 'instock',
+		),
+		array(
+			'key'     => '_sale_price',
+			'value'   => '',
+			'compare' => '!=',
+			'type'    => 'CHAR',
+		),
+	);
+
+	return apply_filters( 'wcb_promo_dropdown_wp_query_args', $args, $product_cat_term_id, $product_cat_slug );
+}
 
 /**
  * Quando WCB_VERSION muda, apaga transients da home que guardam HTML de product cards
@@ -57,6 +174,10 @@ function wcb_maybe_bust_home_product_card_transients() {
 	// IDs em promoção / hero: recalculam na próxima visita (coerente com cards novos).
 	delete_transient( 'wcb_on_sale_ids' );
 	delete_transient( 'wcb_hero_sale_id' );
+	delete_transient( 'wcb_promo_dropdown_cards' );
+	delete_transient( 'wcb_promo_dropdown_cards_promocoes' );
+	delete_transient( 'wcb_promo_dropdown_cards_promocoes_v2' );
+	delete_transient( 'wcb_promo_dropdown_cards_promocoes_v3' );
 
 	// Super Ofertas: chave dinâmica wcb_home_ofertas_{md5(...)} — remover todas as instâncias.
 	global $wpdb;
@@ -100,23 +221,31 @@ function wcb_promo_banner_image_src( $mod_key, $legacy_basename, $fallback_url )
    MODULAR INCLUDES
    ============================================================ */
 require_once WCB_DIR . '/inc/wcb-pure-helpers.php';
+require_once WCB_DIR . '/inc/product-rating-display.php';
 require_once WCB_DIR . '/inc/nav-walker.php';
+require_once WCB_DIR . '/inc/mobile-menu-drilldown.php';
 require_once WCB_DIR . '/inc/enqueue.php';
 require_once WCB_DIR . '/inc/translations.php';
 require_once WCB_DIR . '/inc/cart-checkout.php';
 require_once WCB_DIR . '/inc/woocommerce/cart-mini-ajax.php';
+require_once WCB_DIR . '/inc/wcb-buybox-partials.php';
 require_once WCB_DIR . '/inc/woocommerce.php';
+require_once WCB_DIR . '/inc/wcb-quick-view-buybox.php';
 require_once WCB_DIR . '/inc/cart-page-blocks-extras.php';
 require_once WCB_DIR . '/inc/pdp-reviews.php';
 require_once WCB_DIR . '/inc/wcb-attribute-swatches.php';
 require_once WCB_DIR . '/inc/customizer.php';
 require_once WCB_DIR . '/inc/carousel-backfill.php';
+require_once WCB_DIR . '/inc/super-ofertas-context.php';
 require_once WCB_DIR . '/inc/newsletter.php';
 require_once WCB_DIR . '/inc/widgets-sidebar.php';
+require_once WCB_DIR . '/inc/blog-single.php';
 require_once WCB_DIR . '/inc/cep-autofill.php';
 require_once WCB_DIR . '/inc/abandoned-cart.php';
 require_once WCB_DIR . '/inc/wcb-filter.php';
 require_once WCB_DIR . '/inc/side-cart-performance.php';
+require_once WCB_DIR . '/inc/age-gate.php';
+require_once WCB_DIR . '/inc/security-headers.php';
 
 // Perfil AJAX do carrinho lateral (Xoo): define( 'WCB_PROFILE_CART_AJAX', true ); em wp-config.php
 if ( defined( 'WCB_PROFILE_CART_AJAX' ) && WCB_PROFILE_CART_AJAX ) {
@@ -193,6 +322,9 @@ function wcb_flush_home_transients() {
     delete_transient( 'wcb_home_vendidos' );
     delete_transient( 'wcb_home_estoque' );
     delete_transient( 'wcb_promo_dropdown_cards' );
+    delete_transient( 'wcb_promo_dropdown_cards_promocoes' );
+    delete_transient( 'wcb_promo_dropdown_cards_promocoes_v2' );
+    delete_transient( 'wcb_promo_dropdown_cards_promocoes_v3' );
     delete_transient( 'wcb_on_sale_ids' );
     delete_transient( 'wcb_hero_sale_id' );
     // A chave das ofertas usa hash dos IDs — limpa pelo prefixo via DB
@@ -210,7 +342,9 @@ function wcb_flush_home_transients() {
     $wpdb->query(
         "DELETE FROM {$wpdb->options}
          WHERE option_name LIKE '_transient_wcb_ls_v1_%'
-            OR option_name LIKE '_transient_timeout_wcb_ls_v1_%'"
+            OR option_name LIKE '_transient_timeout_wcb_ls_v1_%'
+            OR option_name LIKE '_transient_wcb_ls_v2_%'
+            OR option_name LIKE '_transient_timeout_wcb_ls_v2_%'"
     );
 }
 
@@ -237,30 +371,32 @@ add_action('init', function() {
     }
 }, 20);
 
-// Esconder completamente via CSS qualquer resíduo dos plugins de wishlist
+// Esconder resíduos dos plugins de wishlist (evite [class*="…"]: substrings como
+// "tinvwl" em "ftinvwl" ou outras classes quebram layout fora dos botões).
 add_action('wp_head', function() {
     echo '<style>
         .alg-wc-wl-btn, .alg-wc-wl-toggle-btn,
+        .alg-wc-wl-btn-wrapper, .alg-wc-wl-thumb-btn,
+        .alg-wc-wl-thumb-btn-shortcode-wrapper, .alg-wc-wl-icon-wrapper,
         .tinvwl_add_to_wishlist_button, .tinv-wishlist,
+        .tinv-wraper, .tinvwl-tooltip,
         .tinvwl-wishlist-null, .tinvwl-shortcode-add-to-cart,
-        .ti-widget-wishlist, .ti-wishlist-icon,
-        [class*="alg-wc-wl"], [class*="tinvwl"] {
+        .ti-widget-wishlist, .ti-wishlist-icon {
             display: none !important;
-            visibility: hidden !important;
         }
     </style>';
 }, 999);
 
 /* ============================================================
    PROMOÇÕES — Mostrar automaticamente produtos em oferta
-   Na página da categoria 'promocoes', substitui a query para
-   listar TODOS os produtos com preço de venda ativo (on_sale),
-   independente de estarem manualmente atribuídos à categoria.
+   Na página da categoria (slug {@see wcb_promocoes_archive_category_slug()}), a query
+   cruza categoria + IDs em oferta (wc_get_product_ids_on_sale), como na loja.
+   O carrossel do header usa a mesma regra em {@see wcb_promo_dropdown_wp_query_args()}.
    ============================================================ */
 add_action( 'pre_get_posts', function ( $query ) {
     if ( is_admin() || ! $query->is_main_query() ) return;
 
-    if ( is_product_category( 'promocoes' ) ) {
+    if ( is_product_category( wcb_promocoes_archive_category_slug() ) ) {
         $on_sale_ids = wc_get_product_ids_on_sale();
         if ( empty( $on_sale_ids ) ) {
             return;
